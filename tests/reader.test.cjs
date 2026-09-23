@@ -45,7 +45,7 @@ test('crossing line gap within same sentence retains popup and updates next-line
     f.move(70,29);await wait(70);assert.equal(box.style.display,'block');
     f.move(12,40);await wait(70);assert.equal(box.style.display,'block');assert.equal(calls,1);
     assert.equal([...box.querySelectorAll('span')].find(s=>s.style.background)?.textContent,'记忆。');
-    f.move(400,29);await wait(0);assert.equal(box.style.display,'none');
+    f.move(400,29);await wait(140);assert.equal(box.style.display,'none');
   }finally{f.close();}
 });
 test('shortcut in host window reaches hovered PDF with physical KeyR and shows progress',async()=>{
@@ -72,14 +72,16 @@ test('host editable field does not trigger PDF retranslation',async()=>{
     input.dispatchEvent(new f.host.KeyboardEvent('keydown',{key:'r',code:'KeyR',ctrlKey:true,altKey:true,bubbles:true}));await wait(50);assert.equal(calls,1);
   }finally{f.close();}
 });
-test('leaving closes immediately even with a legacy hideDelay preference',async()=>{
+test('leaving uses 100ms delay; returning or entering popup cancels closing',async()=>{
   const f=fixture(async()=>answer);
   try{
     f.move(12);await wait(280);const box=f.doc.getElementById('sentence-hover-popup');
-    f.move(600);await wait(0);assert.equal(box.style.display,'none');
-    await wait(50);f.move(12);await wait(280);
+    f.move(600);await wait(60);assert.equal(box.style.display,'block');
+    f.move(12);await wait(140);assert.equal(box.style.display,'block');
+    f.move(600);await wait(60);assert.equal(box.style.display,'block');
     box.dispatchEvent(new f.win.MouseEvent('mouseenter'));await wait(240);assert.equal(box.style.display,'block');
-    box.dispatchEvent(new f.win.MouseEvent('mouseleave'));assert.equal(box.style.display,'none');
+    box.dispatchEvent(new f.win.MouseEvent('mouseleave'));assert.equal(box.style.display,'block');
+    await wait(140);assert.equal(box.style.display,'none');
   }finally{f.close();}
 });
 test('changing sentence hides old popup immediately and returning reuses cache',async()=>{
@@ -134,7 +136,7 @@ test('moving across a word space or punctuation keeps popup and next word update
     f.move(64);await wait(70);assert.equal(box.style.display,'block');
     assert.equal([...box.querySelectorAll('span')].find(s=>s.style.background)?.textContent,'改善');
     f.move(172);await wait(70);assert.equal(box.style.display,'block');assert.equal(calls,1);
-    f.move(400);await wait(0);assert.equal(box.style.display,'none');
+    f.move(400);await wait(140);assert.equal(box.style.display,'none');
   }finally{f.close();}
 });
 test('space crossed during initial hover does not reset opening delay',async()=>{

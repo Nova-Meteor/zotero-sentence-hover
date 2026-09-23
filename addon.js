@@ -101,7 +101,7 @@ var SentenceHover = (() => {
     const doc = win.document, pages = new Map();
     const contextToken = {};
     let current = null, result = null, hoverTimer = null, sequence = 0, lookup = 0, lastPoint = null, lastMove = 0, disposed = false;
-    let pending = null, overPopup = false, busy = false;
+    let pending = null, overPopup = false, busy = false, hideTimer = null;
     let pdfDocument = app.pdfDocument;
     const html = name => doc.createElementNS('http://www.w3.org/1999/xhtml', name);
     const box = html('div'); box.id = 'sentence-hover-popup';
@@ -114,6 +114,11 @@ var SentenceHover = (() => {
     const translation = html('div'); translation.style.cssText = 'font-size:17px;line-height:1.9;padding-right:45px;white-space:normal;overflow-wrap:anywhere;';
     box.append(close, refresh, translation); doc.body.appendChild(box);
     function cancelPending() { win.clearTimeout(hoverTimer); hoverTimer = null; pending = null; }
+    function cancelHide() { win.clearTimeout(hideTimer); hideTimer = null; }
+    function scheduleHide() {
+      if (overPopup || hideTimer !== null) return;
+      hideTimer = win.setTimeout(clear, 100);
+    }
     function sameSentence(a, b) {
       return a && b && a.pageIndex === b.pageIndex && a.sentence.start === b.sentence.start && a.sentence.text === b.sentence.text;
     }
@@ -144,7 +149,7 @@ var SentenceHover = (() => {
       box.style.top = Math.max(margin, Math.min(top, height - margin - size.height)) + 'px';
     }
     function clear() {
-      sequence++; lookup++; cancelPending(); current = null; result = null; busy = false; overPopup = false;
+      sequence++; lookup++; cancelPending(); cancelHide(); current = null; result = null; busy = false; overPopup = false;
       box.style.display = 'none'; lastPoint = null;
       if (activeContext === contextToken) activeContext = null;
       refresh.disabled = false; refresh.textContent = '↻'; box.removeAttribute('aria-busy');
@@ -257,9 +262,10 @@ var SentenceHover = (() => {
         const hit = await locate(point.x, point.y);
         if (disposed || id !== lookup || lastPoint !== point) return;
         if (!hit) {
-          clear();
+          cancelPending(); scheduleHide();
           return;
         }
+        cancelHide();
         activeContext = contextToken;
         if (sameSentence(current, hit)) {
           cancelPending();
@@ -298,11 +304,11 @@ var SentenceHover = (() => {
       event.preventDefault(); event.stopPropagation();
       retranslate();
     }
-    function enterPopup() { activeContext = contextToken; overPopup = true; lookup++; cancelPending(); }
-    function exitPopup() { clear(); }
+    function enterPopup() { activeContext = contextToken; overPopup = true; lookup++; cancelHide(); cancelPending(); }
+    function exitPopup() { overPopup = false; scheduleHide(); }
     function leave(event) {
       if (box.contains(event.relatedTarget)) { enterPopup(); return; }
-      clear();
+      overPopup = false; lookup++; cancelPending(); scheduleHide();
     }
     function scroll(event) { if (!box.contains(event.target)) clear(); }
     close.addEventListener('click', clear);
