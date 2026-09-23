@@ -41,3 +41,15 @@ test('endpoint normalization and remote HTTP rejection', () => {
   assert.throws(()=>core.endpoint('http://example.com/v1'));
   assert.throws(()=>core.endpoint('https://user:secret@example.com/v1'));
 });
+test('sentence area includes unrendered word gaps but excludes margins and column gutters',()=>{
+  const chars=[];
+  for(const [text,x] of [['Sleep',0],['improves',55],['memory.',300]]){
+    Array.from(text).forEach((c,i)=>chars.push({c,rect:[x+i*8,10,x+i*8+8,24],spaceAfter:i===text.length-1}));
+  }
+  const p=core.buildPage(chars),s=p.segments[0];
+  assert.equal(core.atPoint(p,48,16),null);
+  assert.equal(core.withinSentence(p,s,48,16),true);
+  assert.equal(core.withinSentence(p,s,200,16),false);
+  assert.equal(core.withinSentence(p,s,20,40),false);
+  assert.equal(core.withinSentence(p,s,-5,16),false);
+});

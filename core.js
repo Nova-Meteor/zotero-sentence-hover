@@ -61,6 +61,39 @@
     const word = sentence.words.find(w => a.start - sentence.start >= w.start && a.start - sentence.start < w.end);
     return word ? { sentence, word } : null;
   }
+  const sentenceAreas = new WeakMap();
+  function withinSentence(page, sentence, x, y) {
+    let areas = sentenceAreas.get(page);
+    if (!areas) { areas = new Map(); sentenceAreas.set(page, areas); }
+    if (!areas.has(sentence.start)) {
+      // Join character boxes only along the same line and across small gaps.
+      // A bounding box for the whole sentence would include other lines/columns.
+      const rows = [];
+      for (const a of page.anchors) {
+        if (a.end <= sentence.start || a.start >= sentence.end) continue;
+        const r = a.inlineRect;
+        if (!r || r.length < 4 || !r.every(Number.isFinite)) continue;
+        const b = { left: Math.min(r[0],r[2]), right: Math.max(r[0],r[2]), top: Math.min(r[1],r[3]), bottom: Math.max(r[1],r[3]) };
+        const row = rows.find(v => Math.min(v.bottom,b.bottom) - Math.max(v.top,b.top) >= Math.min(v.bottom-v.top,b.bottom-b.top) * 0.6);
+        if (row) row.boxes.push(b);
+        else rows.push({ top:b.top, bottom:b.bottom, boxes:[b] });
+      }
+      const runs = [];
+      for (const row of rows) {
+        row.boxes.sort((a,b) => a.left-b.left);
+        let run = null;
+        for (const b of row.boxes) {
+          const maxGap = Math.max(8, (row.bottom-row.top)*2);
+          if (run && b.left-run.right <= maxGap) {
+            run.right = Math.max(run.right,b.right);
+            run.top = Math.min(run.top,b.top); run.bottom = Math.max(run.bottom,b.bottom);
+          } else { run = { ...b }; runs.push(run); }
+        }
+      }
+      areas.set(sentence.start, runs);
+    }
+    return areas.get(sentence.start).some(r => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom);
+  }
   function parseResult(raw, tokenCount) {
     const clean = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
     const data = JSON.parse(clean);
@@ -84,7 +117,7 @@
     url.pathname = path.endsWith('/chat/completions') ? path : path + '/chat/completions';
     return url.toString();
   }
-  const api = { words, sentences, buildPage, atPoint, parseResult, endpoint };
+  const api = { words, sentences, buildPage, atPoint, withinSentence, parseResult, endpoint };
   root.SHCore = api;
   if (typeof module !== 'undefined') module.exports = api;
 })(globalThis);

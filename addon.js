@@ -213,7 +213,13 @@ var SentenceHover = (() => {
       const localY = (y - rect.top) * pageEl.offsetHeight / rect.height - pageEl.clientTop;
       const [px, py] = view.viewport.convertToPdfPoint(localX * view.viewport.width / pageEl.clientWidth, localY * view.viewport.height / pageEl.clientHeight);
       const hit = SHCore.atPoint(page, px, py);
-      if (!hit) return null;
+      if (!hit) {
+        // Spaces and punctuation have no word mapping but still belong to the
+        // active sentence. Keep its last highlight without restarting the timer.
+        const previous = current || pending;
+        if (previous?.pageIndex === pageIndex && SHCore.withinSentence(page, previous.sentence, px, py)) return previous;
+        return null;
+      }
       // Convert the full sentence's PDF rectangles back into viewport coordinates.
       // The anchor is sentence-wide, so moving between its words does not move the popup.
       let bounds = { left: x, right: x, top: y - 12, bottom: y + 12 };

@@ -112,6 +112,24 @@ test('shortcut is ignored in editable controls',async()=>{
   }finally{f.close();}
 });
 const answer={response:{choices:[{message:{content:JSON.stringify({segments:[{text:'睡眠',source:[0]},{text:'改善',source:[1]},{text:'记忆。',source:[2]}]})}}]}};
+test('moving across a word space or punctuation keeps popup and next word updates highlight',async()=>{
+  let calls=0;const f=fixture(async()=>{calls++;return answer;});
+  try{
+    f.move(12);await wait(280);const box=f.doc.getElementById('sentence-hover-popup');
+    f.move(44);await wait(70);assert.equal(box.style.display,'block');
+    f.move(64);await wait(70);assert.equal(box.style.display,'block');
+    assert.equal([...box.querySelectorAll('span')].find(s=>s.style.background)?.textContent,'改善');
+    f.move(172);await wait(70);assert.equal(box.style.display,'block');assert.equal(calls,1);
+    f.move(400);await wait(0);assert.equal(box.style.display,'none');
+  }finally{f.close();}
+});
+test('space crossed during initial hover does not reset opening delay',async()=>{
+  let calls=0;const f=fixture(async()=>{calls++;return answer;});
+  try{
+    f.move(12);await wait(100);f.move(44);await wait(160);
+    assert.equal(f.doc.getElementById('sentence-hover-popup').style.display,'block');assert.equal(calls,1);
+  }finally{f.close();}
+});
 test('hover whole sentence, move word highlights, no extra request, cleanup',async()=>{
   let count=0;const f=fixture(async()=>{count++;return answer;});
   try{
