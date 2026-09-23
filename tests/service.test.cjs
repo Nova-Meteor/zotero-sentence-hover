@@ -77,3 +77,14 @@ test('clearing cache prevents late response from repopulating it',async()=>{
   const old=api.translate('Memory.');await new Promise(r=>setImmediate(r));await api.reset();finish();await old;
   await api.translate('Memory.');assert.equal(calls,2);
 });
+test('appearance settings are normalized and keep cached translations',async()=>{
+  let calls=0;const api=setup(async()=>{calls++;return response;});
+  await api.translate('Memory.');
+  api.saveAppearance({fontSize:'24',popupWidth:'850',transparency:'45'});
+  assert.equal(api.config().fontSize,24);assert.equal(api.config().popupWidth,850);assert.equal(api.config().transparency,45);
+  await api.translate('Memory.');assert.equal(calls,1);
+  api.saveAppearance({fontSize:Infinity,popupWidth:-200,transparency:1000});
+  assert.equal(api.config().fontSize,17);assert.equal(api.config().popupWidth,240);assert.equal(api.config().transparency,80);
+  api.saveAppearance({fontSize:100,popupWidth:99999,transparency:''});
+  assert.equal(api.config().fontSize,32);assert.equal(api.config().popupWidth,1200);assert.equal(api.config().transparency,0);
+});

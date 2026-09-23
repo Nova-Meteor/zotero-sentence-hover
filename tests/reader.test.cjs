@@ -48,6 +48,21 @@ test('crossing line gap within same sentence retains popup and updates next-line
     f.move(400,29);await wait(140);assert.equal(box.style.display,'none');
   }finally{f.close();}
 });
+test('appearance updates visible popup without dismissing it or making another request',async()=>{
+  let calls=0;const f=fixture(async()=>{calls++;return answer;},300,'normal',300);
+  try{
+    f.move(12);await wait(280);const box=f.doc.getElementById('sentence-hover-popup');
+    f.api.saveAppearance({fontSize:26,popupWidth:800,transparency:40});
+    assert.equal(box.style.display,'block');assert.equal(calls,1);
+    assert.equal(box.lastChild.style.fontSize,'26px');
+    const expected=f.doc.createElement('div');expected.style.maxWidth='min(800px, calc(100vw - 24px))';
+    assert.equal(box.style.maxWidth,expected.style.maxWidth);
+    assert.equal(box.style.backgroundColor,'rgba(255, 255, 255, 0.6)');
+    assert.equal(box.style.opacity,'');assert.equal(box.style.left,'148px');
+    f.move(64);await wait(70);
+    assert.equal([...box.querySelectorAll('span')].find(s=>s.style.background)?.textContent,'改善');
+  }finally{f.close();}
+});
 test('shortcut in host window reaches hovered PDF with physical KeyR and shows progress',async()=>{
   let calls=0,finish;const f=fixture(async()=>{calls++;if(calls===2)await new Promise(r=>finish=r);return answer;});
   try{

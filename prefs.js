@@ -2,9 +2,27 @@ window.SHPrefs = {
   init() {
     const api = Zotero.SentenceHover;
     const get = name => document.getElementById('sh-' + name);
-    const keys = ['enabled','baseURL','model','apiKey','delay'];
+    const appearanceKeys = ['fontSize','popupWidth','transparency'];
+    const keys = ['enabled','baseURL','model','apiKey','delay',...appearanceKeys];
     const c = api.config();
     for (const key of keys) { if (key === 'enabled') get(key).checked = c[key]; else get(key).value = c[key]; }
+    const appearanceValues = () => Object.fromEntries(appearanceKeys.map(key => [key, get(key).value]));
+    const preview = () => {
+      const a = api.normalizeAppearance(appearanceValues());
+      get('preview').style.fontSize = a.fontSize + 'px';
+      get('preview').style.maxWidth = 'min(' + a.popupWidth + 'px, 100%)';
+      get('preview').style.backgroundColor = 'rgba(255, 255, 255, ' + (1-a.transparency/100) + ')';
+      get('transparencyValue').textContent = a.transparency + '%';
+    };
+    for (const key of appearanceKeys) get(key).addEventListener('input', preview);
+    const applyAppearance = values => {
+      const a = api.saveAppearance(values);
+      for (const key of appearanceKeys) get(key).value = a[key];
+      preview(); get('status').textContent = '外观已保存，已打开的阅读器立即生效。';
+    };
+    get('saveAppearance').onclick = () => applyAppearance(appearanceValues());
+    get('defaultAppearance').onclick = () => applyAppearance({ fontSize:17, popupWidth:640, transparency:0 });
+    preview();
     const save = () => {
       const values = Object.fromEntries(keys.map(key => [key, key === 'enabled' ? get(key).checked : get(key).value]));
       api.save(values);

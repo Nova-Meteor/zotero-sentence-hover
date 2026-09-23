@@ -41,11 +41,24 @@ var SentenceHover = (() => {
   }
   let timer, timerWindow, running = false, generation = 0;
   let activeContext = null;
-  const defaults = { enabled: true, baseURL: '', model: '', apiKey: '', delay: 500, maxChars: 1800 };
+  const appearanceRanges = { fontSize: [12, 32, 17], popupWidth: [240, 1200, 640], transparency: [0, 80, 0] };
+  const defaults = { enabled: true, baseURL: '', model: '', apiKey: '', delay: 500, maxChars: 1800, fontSize: 17, popupWidth: 640, transparency: 0 };
+  function normalizeAppearance(values) {
+    return Object.fromEntries(Object.entries(appearanceRanges).map(([key, [min, max, fallback]]) => {
+      const n = values[key] === '' || values[key] == null ? fallback : Number(values[key]);
+      return [key, Number.isFinite(n) ? Math.round(Math.max(min, Math.min(max, n))) : fallback];
+    }));
+  }
   function config() {
     const c = {};
     for (const [key, fallback] of Object.entries(defaults)) c[key] = Zotero.Prefs.get(PREFIX + key, true) ?? fallback;
-    return c;
+    return { ...c, ...normalizeAppearance(c) };
+  }
+  function saveAppearance(values) {
+    const appearance = normalizeAppearance({ ...config(), ...values });
+    for (const [key,value] of Object.entries(appearance)) Zotero.Prefs.set(PREFIX + key, value, true);
+    for (const ctx of contexts.values()) ctx.applyAppearance();
+    return appearance;
   }
   function save(values) {
     const baseURL = String(values.baseURL || '').trim();
@@ -53,12 +66,14 @@ var SentenceHover = (() => {
     if (!String(values.model || '').trim()) throw new Error('请填写模型名称。');
     for (const key of Object.keys(defaults)) {
       if (!(key in values)) continue;
+      if (key in appearanceRanges) continue;
       let value = values[key];
       if (key === 'delay') value = Math.max(200, Math.min(3000, Number(value) || 500));
       if (typeof value === 'string') value = value.trim();
       Zotero.Prefs.set(PREFIX + key, value, true);
     }
     cancelRequests();
+    saveAppearance(values);
   }
   function cancelRequests() {
     generation++;
@@ -147,6 +162,14 @@ var SentenceHover = (() => {
     refresh.style.cssText = 'position:absolute;right:35px;top:8px;border:0;background:transparent;color:inherit;font-size:20px;cursor:pointer;';
     const translation = html('div'); translation.style.cssText = 'font-size:17px;line-height:1.9;padding-right:45px;white-space:normal;overflow-wrap:anywhere;';
     box.append(close, refresh, translation); doc.body.appendChild(box);
+    function applyAppearance() {
+      const c = config();
+      translation.style.fontSize = c.fontSize + 'px';
+      box.style.maxWidth = 'min(' + c.popupWidth + 'px, calc(100vw - 24px))';
+      box.style.backgroundColor = 'rgba(255, 255, 255, ' + (1 - c.transparency / 100) + ')';
+      position();
+    }
+    applyAppearance();
     function cancelPending() { win.clearTimeout(hoverTimer); hoverTimer = null; pending = null; }
     function cancelHide() { win.clearTimeout(hideTimer); hideTimer = null; }
     function scheduleHide() {
@@ -371,7 +394,7 @@ var SentenceHover = (() => {
     doc.addEventListener('scroll', scroll, true);
     win.addEventListener('resize', clear);
     win.addEventListener('blur', clear);
-    return { clear, doc, destroy() {
+    return { clear, doc, applyAppearance, destroy() {
       disposed = true; clear(); pages.clear(); box.remove();
       doc.removeEventListener('mousemove', move, true); doc.removeEventListener('selectionchange', selection);
       for (const w of keyWindows) w.removeEventListener('keydown', key, true);
@@ -405,5 +428,5 @@ var SentenceHover = (() => {
     for (const ctx of contexts.values()) ctx.destroy(); contexts.clear();
     await flushCaches();
   }
-  return { start, stop, config, save, translate, reset, flushCache: flushCaches, diagnostic: () => ({ readers: (Zotero.Reader._readers || []).length, connectedPDFViews: contexts.size, cachedSentences: cacheStatus().count, cache: cacheStatus() }) };
+  return { start, stop, config, save, saveAppearance, normalizeAppearance, translate, reset, flushCache: flushCaches, diagnostic: () => ({ readers: (Zotero.Reader._readers || []).length, connectedPDFViews: contexts.size, cachedSentences: cacheStatus().count, cache: cacheStatus() }) };
 })();

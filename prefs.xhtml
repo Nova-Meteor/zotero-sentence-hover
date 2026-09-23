@@ -9,10 +9,18 @@
     <html:p><html:label for="sh-model">模型名称</html:label><html:br/><html:input id="sh-model" type="text" style="width:95%" placeholder="填写服务商支持的模型 ID"/></html:p>
     <html:p><html:label for="sh-apiKey">API 密钥</html:label><html:br/><html:input id="sh-apiKey" type="password" autocomplete="off" style="width:95%"/></html:p>
     <html:p><html:label for="sh-delay">悬停等待时间（毫秒）</html:label> <html:input id="sh-delay" type="number" min="200" max="3000" step="100" style="width:90px"/></html:p>
+    <html:h3>弹窗外观</html:h3>
+    <html:p><html:label for="sh-fontSize">译文字号（像素）</html:label> <html:input id="sh-fontSize" type="number" min="12" max="32" step="1" style="width:90px"/></html:p>
+    <html:p><html:label for="sh-popupWidth">弹窗最大宽度（像素）</html:label> <html:input id="sh-popupWidth" type="number" min="240" max="1200" step="10" style="width:90px"/><html:br/><html:small>短句自动收窄，长句达到此宽度后换行；不会超出阅读器边界。</html:small></html:p>
+    <html:p><html:label for="sh-transparency">背景透明度</html:label> <html:input id="sh-transparency" type="range" min="0" max="80" step="1"/> <html:span id="sh-transparencyValue"/><html:br/><html:small>0% 为不透明，80% 最透明。文字、按钮和高亮保持清晰。</html:small></html:p>
+    <html:div style="padding:16px;background:repeating-linear-gradient(135deg,#d8dfe4 0px,#d8dfe4 12px,#eef1f3 12px,#eef1f3 24px);border-radius:10px;overflow:hidden;">
+      <html:div id="sh-preview" style="width:max-content;box-sizing:border-box;padding:16px 18px;border:1px solid #9bacb6;border-radius:12px;color:#182a31;line-height:1.9;overflow-wrap:anywhere;">研究表明，<html:span style="background:#ffe28a;border-radius:3px;">睡眠</html:span>有助于巩固记忆，并改善学习表现。这段文字用于预览弹窗的字号、宽度和背景透明度。</html:div>
+    </html:div>
+    <html:p><html:button id="sh-saveAppearance" type="button">保存外观</html:button> <html:button id="sh-defaultAppearance" type="button">恢复默认外观</html:button></html:p>
     <html:p>移入弹窗可保持显示并复制译文。按 Ctrl+Alt+R 重译当前句子（macOS：⌘+Option+R），跳过缓存并更新译文；请求进行中不重复发送。也可点击弹窗右上角 ↻，处理中按钮显示 …。</html:p>
     <html:p><html:button id="sh-save" type="button">保存设置</html:button> <html:button id="sh-test" type="button">保存并测试翻译</html:button> <html:button id="sh-clear" type="button">清空已加载文章缓存</html:button></html:p>
     <html:p id="sh-status" role="status" style="white-space:pre-wrap"/>
     <html:p><html:small>测试及快捷重译会重新调用 API，按服务商规则计费。密钥保存在本机 Zotero 首选项中（未加密）。原句、译文及词语对应关系保存在 各 PDF 所在目录的 sentence-hover-cache.json 中，每个目录最多 1000 句，90 天未使用的缓存失效；缓存文件不保存 API 密钥。更换服务或模型会使用独立缓存；清空按钮只处理本次运行已加载的文章缓存。没有独立译法的冠词、助动词可能不高亮。</html:small></html:p>
-    <html:p><html:small>试用版 0.2.7 · 面向 Zotero 10 标准 PDF 视图。需要可提取文本的 PDF；扫描件需先 OCR。跨页句子和复杂排版暂不保证完整断句。</html:small></html:p>
+    <html:p><html:small>试用版 0.3.0 · 面向 Zotero 10 标准 PDF 视图。需要可提取文本的 PDF；扫描件需先 OCR。跨页句子和复杂排版暂不保证完整断句。</html:small></html:p>
   </html:div>
 </vbox>
