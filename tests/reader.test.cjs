@@ -5,7 +5,7 @@ const path=require('node:path');
 const vm=require('node:vm');
 const {JSDOM}=require(process.env.SH_JSDOM || 'jsdom');
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
-function fixture(request, pageTop = 0, geometry = 'normal', pageLeft = 0) {
+function fixture(request, pageTop = 0, geometry = 'normal', pageLeft = 0, multiline = false) {
   const dom=new JSDOM('<body><div class="page" data-page-number="1"></div></body>',{pretendToBeVisual:true});
   const win=dom.window,doc=win.document,page=doc.querySelector('.page');
   const host=new JSDOM('<body></body>',{pretendToBeVisual:true}).window;
@@ -13,7 +13,11 @@ function fixture(request, pageTop = 0, geometry = 'normal', pageLeft = 0) {
   page.getBoundingClientRect=()=>({left:pageLeft,top:pageTop,width:600,height:800});
   doc.elementFromPoint=(x,y)=>x<pageLeft+500&&y<pageTop+100?page:doc.body;
   const text='Sleep improves memory. Research helps.';
-  const chars=Array.from(text,(c,i)=>({c,rect:[i*8,10,i*8+8,24]}));
+  const chars=Array.from(text,(c,i)=>{
+    const secondLine=multiline && i>=15;
+    const x=(secondLine?i-15:i)*8,y=secondLine?34:10;
+    return {c,rect:[x,y,x+8,y+14]};
+  });
   const viewport = {
     width:600,height:800,convertToPdfPoint:(x,y)=>[x,y],
     convertToViewportRectangle:()=>{throw new Error('Permission denied to access property 0');},
@@ -32,8 +36,18 @@ function fixture(request, pageTop = 0, geometry = 'normal', pageLeft = 0) {
   for(const file of ['core.js','cache.js','addon.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),scope);
   const api=scope.SentenceHover;api.start();
   doc.getElementById('sentence-hover-popup').getBoundingClientRect=()=>({width:480,height:120});
-  return {api,win,host,doc,move:(x)=>page.dispatchEvent(new win.MouseEvent('mousemove',{bubbles:true,clientX:pageLeft+x,clientY:pageTop+16})),close:()=>{api.stop();win.close();host.close();}};
+  return {api,win,host,doc,move:(x,y=16)=>page.dispatchEvent(new win.MouseEvent('mousemove',{bubbles:true,clientX:pageLeft+x,clientY:pageTop+y})),close:()=>{api.stop();win.close();host.close();}};
 }
+test('crossing line gap within same sentence retains popup and updates next-line highlight',async()=>{
+  let calls=0;const f=fixture(async()=>{calls++;return answer;},0,'normal',0,true);
+  try{
+    f.move(64,16);await wait(280);const box=f.doc.getElementById('sentence-hover-popup');
+    f.move(70,29);await wait(70);assert.equal(box.style.display,'block');
+    f.move(12,40);await wait(70);assert.equal(box.style.display,'block');assert.equal(calls,1);
+    assert.equal([...box.querySelectorAll('span')].find(s=>s.style.background)?.textContent,'记忆。');
+    f.move(400,29);await wait(0);assert.equal(box.style.display,'none');
+  }finally{f.close();}
+});
 test('shortcut in host window reaches hovered PDF with physical KeyR and shows progress',async()=>{
   let calls=0,finish;const f=fixture(async()=>{calls++;if(calls===2)await new Promise(r=>finish=r);return answer;});
   try{

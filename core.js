@@ -90,7 +90,23 @@
           } else { run = { ...b }; runs.push(run); }
         }
       }
-      areas.set(sentence.start, runs);
+      const bridges = [];
+      const sorted = [...runs].sort((a,b) => a.top-b.top);
+      for (let i = 0; i < sorted.length; i++) {
+        const upper = sorted[i];
+        for (let j = i+1; j < sorted.length; j++) {
+          const lower = sorted[j];
+          const gap = lower.top-upper.bottom;
+          const lineHeight = Math.min(upper.bottom-upper.top, lower.bottom-lower.top);
+          if (gap < 0 || gap > lineHeight*1.5) continue;
+          // Bridge neighboring lines only when their horizontal extents overlap.
+          // Never connect separate columns or a large paragraph gap.
+          if (Math.min(upper.right,lower.right) <= Math.max(upper.left,lower.left)) continue;
+          if (sorted.some(r => r !== upper && r !== lower && r.top > upper.top && r.top < lower.top)) continue;
+          bridges.push({ left:Math.min(upper.left,lower.left), right:Math.max(upper.right,lower.right), top:upper.bottom, bottom:lower.top });
+        }
+      }
+      areas.set(sentence.start, [...runs, ...bridges]);
     }
     return areas.get(sentence.start).some(r => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom);
   }

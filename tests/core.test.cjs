@@ -53,3 +53,15 @@ test('sentence area includes unrendered word gaps but excludes margins and colum
   assert.equal(core.withinSentence(p,s,20,40),false);
   assert.equal(core.withinSentence(p,s,-5,16),false);
 });
+test('wrapped sentence includes interline space but not paragraph gaps or separate columns',()=>{
+  const make=(x,y)=>core.buildPage([
+    {c:'Sleep improves ',rect:[0,10,120,24]},
+    {c:'memory.',rect:[x,y,x+56,y+14]}
+  ]);
+  let p=make(0,34);
+  assert.equal(core.withinSentence(p,p.segments[0],90,29),true);
+  assert.equal(core.withinSentence(p,p.segments[0],140,29),false);
+  assert.equal(core.withinSentence(p,p.segments[0],20,55),false);
+  p=make(0,90);assert.equal(core.withinSentence(p,p.segments[0],20,50),false);
+  p=make(300,34);assert.equal(core.withinSentence(p,p.segments[0],200,29),false);
+});
