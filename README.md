@@ -22,7 +22,7 @@
 
 当前版本 **v1.0.0**，Zotero 版本要求为 **10.x**。
 
-1. 准备插件安装文件 `sentence-hover-1.0.0.xpi`。
+1. 从 [Releases](https://github.com/Nova-Meteor/zotero-sentence-hover/releases/latest) 下载插件安装文件 `sentence-hover-1.0.0.xpi`。
 2. 打开 Zotero，进入 **工具 → 插件**。
 3. 点击右上角齿轮，选择 **Install Plugin From File...**，选中该 XPI 文件。
 4. 安装后重新打开 PDF；如果设置页未出现，可重启 Zotero。

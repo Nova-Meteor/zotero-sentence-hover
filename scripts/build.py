@@ -26,4 +26,15 @@ with ZipFile(xpi) as z:
     assert set(z.namelist()) == set(runtime)
 checksum = hashlib.sha256(xpi.read_bytes()).hexdigest()
 (output / 'SHA256SUMS.txt').write_text(f'{checksum}  {xpi.name}' + chr(10), encoding='utf-8')
+release_url = manifest['homepage_url'] + f'/releases/download/v{version}/{xpi.name}'
+updates = {'addons': {app['id']: {'updates': [{
+    'version': version,
+    'update_link': release_url,
+    'update_hash': 'sha256:' + checksum,
+    'applications': {'zotero': {
+        'strict_min_version': app['strict_min_version'],
+        'strict_max_version': app['strict_max_version']
+    }}
+}]}}}
+(output / 'updates.json').write_text(json.dumps(updates, indent=2) + chr(10), encoding='utf-8')
 print(json.dumps({'xpi':str(xpi),'bytes':xpi.stat().st_size,'manifest':'valid','xhtml':'valid','archive':'valid'}, ensure_ascii=False))
