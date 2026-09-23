@@ -16,7 +16,7 @@ for field in ('id', 'update_url', 'strict_max_version'):
     assert app.get(field), f'Missing required Zotero manifest field: {field}'
 assert app['update_url'].startswith('https://')
 ET.parse(source / 'prefs.xhtml')
-runtime = ['manifest.json','bootstrap.js','core.js','addon.js','prefs.xhtml','prefs.js','README.md','LICENSE']
+runtime = ['manifest.json','bootstrap.js','core.js','cache.js','addon.js','prefs.xhtml','prefs.js','README.md','LICENSE']
 xpi = output / f'sentence-hover-{version}.xpi'
 with ZipFile(xpi, 'w', ZIP_DEFLATED) as z:
     for name in runtime:

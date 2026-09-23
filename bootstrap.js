@@ -1,8 +1,9 @@
 var shScope;
 async function startup({ rootURI }, reason) {
   await Zotero.uiReadyPromise;
-  shScope = { Zotero, Services, Components, URL: Zotero.getMainWindow().URL };
+  shScope = { Zotero, Services, Components, IOUtils, PathUtils, URL: Zotero.getMainWindow().URL };
   Services.scriptloader.loadSubScript(rootURI + 'core.js', shScope, 'UTF-8');
+  Services.scriptloader.loadSubScript(rootURI + 'cache.js', shScope, 'UTF-8');
   Services.scriptloader.loadSubScript(rootURI + 'addon.js', shScope, 'UTF-8');
   Zotero.SentenceHover = shScope.SentenceHover;
   await Zotero.PreferencePanes.register({
@@ -11,8 +12,8 @@ async function startup({ rootURI }, reason) {
   });
   shScope.SentenceHover.start();
 }
-function shutdown() {
-  shScope?.SentenceHover?.stop();
+async function shutdown() {
+  await shScope?.SentenceHover?.stop();
   delete Zotero.SentenceHover;
   shScope = null;
 }

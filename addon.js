@@ -2,9 +2,18 @@
 var SentenceHover = (() => {
   'use strict';
   const PREFIX = 'extensions.sentenceHover.';
-  const contexts = new Map(), cache = new Map(), inflight = new Map(), requests = new Set();
+  const contexts = new Map(), inflight = new Map(), requests = new Set();
+  const cachePath = typeof PathUtils !== 'undefined' ? PathUtils.join(Zotero.Profile.dir, 'sentence-hover-cache.json') : null;
+  const cache = SHCache.create({ storage: cachePath ? {
+    async read() {
+      if (!(await IOUtils.exists(cachePath))) return null;
+      if ((await IOUtils.stat(cachePath)).size > 8000000) throw new Error('Cache too large');
+      return IOUtils.readJSON(cachePath);
+    },
+    write: data => IOUtils.writeJSON(cachePath, data, { tmpPath: cachePath + '.tmp' })
+  } : null });
   let timer, timerWindow, running = false, generation = 0;
-  const defaults = { enabled: true, baseURL: '', model: '', apiKey: '', delay: 500, maxChars: 1800 };
+  const defaults = { enabled: true, baseURL: '', model: '', apiKey: '', delay: 500, hideDelay: 450, maxChars: 1800 };
   function config() {
     const c = {};
     for (const [key, fallback] of Object.entries(defaults)) c[key] = Zotero.Prefs.get(PREFIX + key, true) ?? fallback;
@@ -18,31 +27,37 @@ var SentenceHover = (() => {
       if (!(key in values)) continue;
       let value = values[key];
       if (key === 'delay') value = Math.max(200, Math.min(3000, Number(value) || 500));
+      if (key === 'hideDelay') value = Math.max(150, Math.min(2000, Number(value) || 450));
       if (typeof value === 'string') value = value.trim();
       Zotero.Prefs.set(PREFIX + key, value, true);
     }
-    reset();
+    cancelRequests();
   }
-  function reset() {
+  function cancelRequests() {
     generation++;
     for (const xhr of requests) { try { xhr.abort(); } catch (_) {} }
-    requests.clear(); cache.clear(); inflight.clear();
+    requests.clear(); inflight.clear();
     for (const ctx of contexts.values()) ctx.clear();
   }
-  async function translate(text) {
+  async function reset() { cancelRequests(); await cache.clear(); }
+  async function translate(text, { force = false } = {}) {
+    const epoch = generation;
+    await cache.ready;
+    if (epoch !== generation) throw new Error('请求已取消。');
     const c = config();
     if (!c.baseURL || !c.model) throw new Error('请先到「编辑 → 设置 → 句译随行」填写 API 地址、模型和密钥。');
     if (text.length > c.maxChars) throw new Error('识别出的句子过长，已跳过。请检查 PDF 文本层或断句。');
     const tokens = SHCore.words(text);
     if (!tokens.length) throw new Error('未识别到英文单词。');
-    const key = JSON.stringify([generation, c.baseURL, c.model, text]);
-    if (cache.has(key)) { const result = cache.get(key); cache.delete(key); cache.set(key,result); return result; }
+    const key = cache.key(SHCore.endpoint(c.baseURL), c.model, text);
+    const cached = force ? null : cache.get(key);
+    if (cached) return cached;
     if (inflight.has(key)) return inflight.get(key);
     if (inflight.size >= 2) throw new Error('正在处理其他句子，请稍后再悬停。');
-    const epoch = generation;
     const promise = Promise.resolve().then(async () => {
       let xhr;
       try {
+        if (epoch !== generation) throw new Error('请求已取消。');
         const url = SHCore.endpoint(c.baseURL);
         const headers = { 'Content-Type': 'application/json' };
         if (c.apiKey) headers.Authorization = 'Bearer ' + c.apiKey;
@@ -62,8 +77,7 @@ var SentenceHover = (() => {
         if (typeof raw !== 'string') throw new Error('API 未返回 chat/completions 格式的文本结果。');
         const result = SHCore.parseResult(raw, tokens.length);
         if (epoch === generation) {
-          cache.set(key, result);
-          while (cache.size > 250) cache.delete(cache.keys().next().value);
+          cache.put(key, result);
         }
         return result;
       } catch (e) {
@@ -86,6 +100,7 @@ var SentenceHover = (() => {
   function makeContext(win, app) {
     const doc = win.document, pages = new Map();
     let current = null, result = null, hoverTimer = null, sequence = 0, lookup = 0, lastPoint = null, lastMove = 0, disposed = false;
+    let pending = null, hideTimer = null, overPopup = false, busy = false;
     let pdfDocument = app.pdfDocument;
     const html = name => doc.createElementNS('http://www.w3.org/1999/xhtml', name);
     const box = html('div'); box.id = 'sentence-hover-popup';
@@ -94,6 +109,16 @@ var SentenceHover = (() => {
     close.style.cssText = 'position:absolute;right:10px;top:8px;border:0;background:transparent;color:inherit;font-size:22px;cursor:pointer;';
     const translation = html('div'); translation.style.cssText = 'font-size:17px;line-height:1.9;padding-right:20px;white-space:normal;overflow-wrap:anywhere;';
     box.append(close, translation); doc.body.appendChild(box);
+    box.title = 'Ctrl+Alt+R 重新翻译当前句子（macOS：⌘+Option+R）';
+    function cancelHide() { win.clearTimeout(hideTimer); hideTimer = null; }
+    function cancelPending() { win.clearTimeout(hoverTimer); hoverTimer = null; pending = null; }
+    function scheduleHide() {
+      if (overPopup || hideTimer !== null) return;
+      hideTimer = win.setTimeout(clear, config().hideDelay);
+    }
+    function sameSentence(a, b) {
+      return a && b && a.pageIndex === b.pageIndex && a.sentence.start === b.sentence.start && a.sentence.text === b.sentence.text;
+    }
     function position() {
       if (!current?.bounds || box.style.display === 'none') return;
       const margin = 12, gap = 10;
@@ -121,7 +146,7 @@ var SentenceHover = (() => {
       box.style.top = Math.max(margin, Math.min(top, height - margin - size.height)) + 'px';
     }
     function clear() {
-      sequence++; lookup++; win.clearTimeout(hoverTimer); current = null; result = null;
+      sequence++; lookup++; cancelPending(); cancelHide(); current = null; result = null; busy = false; overPopup = false;
       box.style.display = 'none'; lastPoint = null;
     }
     function render() {
@@ -136,19 +161,26 @@ var SentenceHover = (() => {
       }
       position();
     }
-    async function show() {
+    async function show(force = false) {
       if (!current || disposed) return;
       const ticket = sequence, text = current.sentence.text;
-      box.style.display = 'block'; translation.textContent = '正在翻译整句…';
+      busy = true;
+      box.style.display = 'block';
+      // Retain the existing translation while explicitly refreshing it.
+      if (!force || !result) translation.textContent = '正在翻译整句…';
+      box.setAttribute('aria-busy', 'true');
       position();
       try {
-        const translated = await translate(text);
+        const translated = await translate(text, { force });
         if (disposed || ticket !== sequence || !current) return;
         result = translated; render();
       } catch (e) {
         if (disposed || ticket !== sequence) return;
-        translation.textContent = e.message;
+        if (force && result) { render(); translation.appendChild(doc.createTextNode('（重译失败，可再次按快捷键）')); }
+        else translation.textContent = e.message;
         position();
+      } finally {
+        if (ticket === sequence) { busy = false; box.removeAttribute('aria-busy'); }
       }
     }
     async function locate(x, y) {
@@ -203,7 +235,8 @@ var SentenceHover = (() => {
       return { ...hit, pageIndex, bounds, point: { x, y } };
     }
     async function move(event) {
-      if (box.contains(event.target)) return;
+      if (box.contains(event.target)) { enterPopup(); return; }
+      overPopup = false;
       if (!config().enabled || event.buttons || !win.getSelection().isCollapsed) { clear(); return; }
       const now = Date.now();
       if (now - lastMove < 45) return;
@@ -214,35 +247,63 @@ var SentenceHover = (() => {
         const hit = await locate(point.x, point.y);
         if (disposed || id !== lookup || lastPoint !== point) return;
         if (!hit) {
-          // Keep the sentence popup while crossing spaces between words.
-          win.clearTimeout(hoverTimer);
-          if (current && !result) { sequence++; current = null; box.style.display = 'none'; }
+          cancelPending(); scheduleHide();
           return;
         }
-        const same = current?.pageIndex === hit.pageIndex && current?.sentence.start === hit.sentence.start && current?.sentence.text === hit.sentence.text;
-        if (same) { current = hit; if (result) render(); return; }
-        sequence++; current = hit; result = null; win.clearTimeout(hoverTimer); box.style.display = 'none';
-        hoverTimer = win.setTimeout(show, config().delay);
+        cancelHide();
+        if (sameSentence(current, hit)) {
+          cancelPending();
+          const changed = current.word.id !== hit.word.id;
+          current = hit; if (result && changed) render(); return;
+        }
+        if (sameSentence(pending, hit)) { pending = hit; return; }
+        cancelPending(); pending = hit;
+        // Keep the old popup until the next sentence passes its hover delay.
+        hoverTimer = win.setTimeout(() => {
+          const next = pending; cancelPending();
+          if (!next || disposed || overPopup) return;
+          sequence++; current = next; result = null; show();
+        }, config().delay);
       } catch (_) {
         // Malformed/scanned pages do not interrupt Zotero's own reader.
       }
     }
-    function selection() { if (!win.getSelection().isCollapsed) clear(); }
-    function key(event) { if (event.key === 'Escape') clear(); }
-    function leave() { win.clearTimeout(hoverTimer); if (!result) clear(); }
+    function selection() {
+      const selected = win.getSelection();
+      if (!selected.isCollapsed && !box.contains(selected.anchorNode)) clear();
+    }
+    function key(event) {
+      if (event.key === 'Escape') { clear(); return; }
+      if (event.defaultPrevented || event.repeat || event.shiftKey || !event.altKey || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'r') return;
+      if (event.target?.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+      if (!config().enabled || !current || box.style.display === 'none') return;
+      event.preventDefault(); event.stopPropagation();
+      if (busy) return;
+      cancelPending(); sequence++; show(true);
+    }
+    function enterPopup() { overPopup = true; lookup++; cancelHide(); cancelPending(); }
+    function exitPopup() { overPopup = false; scheduleHide(); }
+    function leave(event) {
+      if (box.contains(event.relatedTarget)) { enterPopup(); return; }
+      overPopup = false; lookup++; cancelPending(); scheduleHide();
+    }
     function scroll(event) { if (!box.contains(event.target)) clear(); }
     close.addEventListener('click', clear);
+    box.addEventListener('mouseenter', enterPopup);
+    box.addEventListener('mouseleave', exitPopup);
     doc.addEventListener('mousemove', move, true);
     doc.addEventListener('selectionchange', selection);
     doc.addEventListener('keydown', key, true);
     doc.addEventListener('mouseleave', leave);
     doc.addEventListener('scroll', scroll, true);
     win.addEventListener('resize', clear);
+    win.addEventListener('blur', clear);
     return { clear, doc, destroy() {
       disposed = true; clear(); pages.clear(); box.remove();
       doc.removeEventListener('mousemove', move, true); doc.removeEventListener('selectionchange', selection);
       doc.removeEventListener('keydown', key, true); doc.removeEventListener('mouseleave', leave);
       doc.removeEventListener('scroll', scroll, true); win.removeEventListener('resize', clear);
+      win.removeEventListener('blur', clear);
     } };
   }
   function scan() {
@@ -265,9 +326,10 @@ var SentenceHover = (() => {
     for (const [win, ctx] of contexts) if (!found.has(win)) { ctx.destroy(); contexts.delete(win); }
   }
   function start() { running = true; timerWindow = Zotero.getMainWindow(); scan(); timer = timerWindow.setInterval(scan, 1500); }
-  function stop() {
-    running = false; timerWindow?.clearInterval(timer); reset();
+  async function stop() {
+    running = false; timerWindow?.clearInterval(timer); cancelRequests();
     for (const ctx of contexts.values()) ctx.destroy(); contexts.clear();
+    await cache.flush();
   }
-  return { start, stop, config, save, translate, reset, diagnostic: () => ({ readers: (Zotero.Reader._readers || []).length, connectedPDFViews: contexts.size, cachedSentences: cache.size }) };
+  return { start, stop, config, save, translate, reset, flushCache: () => cache.flush(), diagnostic: () => ({ readers: (Zotero.Reader._readers || []).length, connectedPDFViews: contexts.size, cachedSentences: cache.status().count, cache: cache.status() }) };
 })();

@@ -2,11 +2,11 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
-function setup(request) {
+function setup(request, extra = {}) {
   const prefs=new Map(Object.entries({baseURL:'https://example.com/v1',model:'test',apiKey:'private-key'}).map(([k,v])=>['extensions.sentenceHover.'+k,v]));
-  const scope={URL, Zotero:{Prefs:{get:k=>prefs.get(k),set:(k,v)=>prefs.set(k,v)},HTTP:{request}},Services:{},Components:{}};
+  const scope={URL, Zotero:{Prefs:{get:k=>prefs.get(k),set:(k,v)=>prefs.set(k,v)},HTTP:{request},Profile:{dir:'/profile'}},Services:{},Components:{},...extra};
   vm.createContext(scope);
-  for(const file of ['core.js','addon.js']) vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'..',file),'utf8'),scope);
+  for(const file of ['core.js','cache.js','addon.js']) vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'..',file),'utf8'),scope);
   return scope.SentenceHover;
 }
 const response={response:{choices:[{message:{content:JSON.stringify({segments:[{text:'记忆',source:[0]}]})}}]}};
@@ -31,4 +31,35 @@ test('at most two distinct requests may run concurrently',async()=>{
   const a=api.translate('Memory.'),b=api.translate('Sleep.');
   await assert.rejects(api.translate('Research.'),/正在处理/);
   await new Promise(r=>setImmediate(r));finishes.forEach(f=>f());await Promise.all([a,b]);
+});
+test('disk cache survives new plugin instance; force refresh replaces it without storing credentials',async()=>{
+  let disk=null,calls=0;
+  const extra={PathUtils:{join:(...a)=>a.join('/')},IOUtils:{exists:async()=>disk!==null,stat:async()=>({size:disk.length}),readJSON:async()=>JSON.parse(disk),writeJSON:async(p,data,options)=>{assert.equal(options.tmpPath,p+'.tmp');disk=JSON.stringify(data);}}};
+  const request=async()=>{calls++;return response;};
+  const a=setup(request,extra);await a.translate('Memory.');await a.flushCache();
+  assert.ok(disk.includes('Memory.'));assert.ok(!disk.includes('private-key'));
+  const b=setup(request,extra);await b.translate('Memory.');assert.equal(calls,1);
+  await b.translate('Memory.',{force:true});assert.equal(calls,2);
+  await b.reset();assert.equal(JSON.parse(disk).entries.length,0);
+  const c=setup(request,extra);await c.translate('Memory.');assert.equal(calls,3);
+});
+test('saving timing settings retains cache and switching models isolates then restores it',async()=>{
+  let calls=0;const api=setup(async()=>{calls++;return response;});
+  await api.translate('Memory.');api.save({...api.config(),hideDelay:700});await api.translate('Memory.');assert.equal(calls,1);
+  api.save({...api.config(),model:'another'});await api.translate('Memory.');assert.equal(calls,2);
+  api.save({...api.config(),model:'test'});await api.translate('Memory.');assert.equal(calls,2);
+});
+test('failed force refresh preserves previous result and repeated refresh coalesces',async()=>{
+  let calls=0,finish;
+  const api=setup(async()=>{calls++;if(calls>1){await new Promise(r=>finish=r);throw{status:429};}return response;});
+  await api.translate('Memory.');
+  const a=api.translate('Memory.',{force:true}),b=api.translate('Memory.',{force:true});
+  const rejected=Promise.all([assert.rejects(a),assert.rejects(b)]);
+  await new Promise(r=>setImmediate(r));finish();await rejected;
+  await api.translate('Memory.');assert.equal(calls,2);
+});
+test('clearing cache prevents late response from repopulating it',async()=>{
+  let finish,calls=0;const api=setup(async()=>{calls++;if(calls===1)await new Promise(r=>finish=r);return response;});
+  const old=api.translate('Memory.');await new Promise(r=>setImmediate(r));await api.reset();finish();await old;
+  await api.translate('Memory.');assert.equal(calls,2);
 });

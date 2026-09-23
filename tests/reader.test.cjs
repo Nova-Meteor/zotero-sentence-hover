@@ -25,14 +25,66 @@ function fixture(request, pageTop = 0, geometry = 'normal', pageLeft = 0) {
     }
   };
   win.PDFViewerApplication={pdfDocument:{getPageData:async()=>({chars})},pdfViewer:{getPageView:()=>({viewport})}};
-  const prefs=new Map(Object.entries({baseURL:'https://example.com/v1',model:'test',delay:200,enabled:true}).map(([k,v])=>['extensions.sentenceHover.'+k,v]));
+  const prefs=new Map(Object.entries({baseURL:'https://example.com/v1',model:'test',delay:200,hideDelay:180,enabled:true}).map(([k,v])=>['extensions.sentenceHover.'+k,v]));
   const scope={URL,Zotero:{Prefs:{get:k=>prefs.get(k),set:(k,v)=>prefs.set(k,v)},HTTP:{request},getMainWindow:()=>win,Reader:{_readers:[{_iframeWindow:win}]}},Services:{},Components:{utils:{cloneInto:x=>x}}};
   vm.createContext(scope);
-  for(const file of ['core.js','addon.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),scope);
+  for(const file of ['core.js','cache.js','addon.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),scope);
   const api=scope.SentenceHover;api.start();
   doc.getElementById('sentence-hover-popup').getBoundingClientRect=()=>({width:480,height:120});
   return {api,win,doc,move:(x)=>page.dispatchEvent(new win.MouseEvent('mousemove',{bubbles:true,clientX:pageLeft+x,clientY:pageTop+16})),close:()=>{api.stop();win.close();}};
 }
+test('leaving delays close; entering popup keeps it visible until leaving again',async()=>{
+  const f=fixture(async()=>answer);
+  try{
+    f.move(12);await wait(280);const box=f.doc.getElementById('sentence-hover-popup');
+    f.move(600);await wait(80);assert.equal(box.style.display,'block');
+    box.dispatchEvent(new f.win.MouseEvent('mouseenter'));await wait(240);assert.equal(box.style.display,'block');
+    box.dispatchEvent(new f.win.MouseEvent('mouseleave'));await wait(240);assert.equal(box.style.display,'none');
+  }finally{f.close();}
+});
+test('brief sentence crossing retains popup and returning cancels pending translation',async()=>{
+  let calls=0;const f=fixture(async()=>{calls++;return answer;});
+  try{
+    f.move(12);await wait(280);const box=f.doc.getElementById('sentence-hover-popup');const before=box.textContent;
+    f.move(200);await wait(80);assert.equal(box.style.display,'block');assert.equal(box.textContent,before);
+    f.move(12);await wait(280);assert.equal(calls,1);
+  }finally{f.close();}
+});
+test('shortcut bypasses cache and does not duplicate requests while busy',async()=>{
+  let calls=0,finish;const f=fixture(async()=>{calls++;if(calls===2)await new Promise(r=>finish=r);return answer;});
+  try{
+    f.move(12);await wait(280);
+    const press=()=>f.doc.dispatchEvent(new f.win.KeyboardEvent('keydown',{key:'r',ctrlKey:true,altKey:true,cancelable:true}));
+    press();await wait(30);press();await wait(30);assert.equal(calls,2);
+    finish();await wait(60);assert.ok(f.doc.getElementById('sentence-hover-popup').textContent.includes('睡眠改善记忆。'));
+  }finally{f.close();}
+});
+test('selecting translated text does not close popup',async()=>{
+  const f=fixture(async()=>answer);
+  try{
+    f.move(12);await wait(280);const box=f.doc.getElementById('sentence-hover-popup');
+    const range=f.doc.createRange();range.selectNodeContents(box.lastChild);f.win.getSelection().addRange(range);
+    f.doc.dispatchEvent(new f.win.Event('selectionchange'));assert.equal(box.style.display,'block');
+  }finally{f.close();}
+});
+test('late result from previous sentence does not replace new sentence',async()=>{
+  let release,calls=0;
+  const second={response:{choices:[{message:{content:JSON.stringify({segments:[{text:'研究有帮助。',source:[0,1]}]})}}]}};
+  const f=fixture(async()=>{calls++;if(calls===1){await new Promise(r=>release=r);return answer;}return second;});
+  try{
+    f.move(12);await wait(270);f.move(200);await wait(270);
+    const box=f.doc.getElementById('sentence-hover-popup');assert.ok(box.textContent.includes('研究有帮助。'));
+    release();await wait(50);assert.ok(box.textContent.includes('研究有帮助。'));assert.ok(!box.textContent.includes('睡眠'));
+  }finally{f.close();}
+});
+test('shortcut is ignored in editable controls',async()=>{
+  let calls=0;const f=fixture(async()=>{calls++;return answer;});
+  try{
+    f.move(12);await wait(280);const input=f.doc.createElement('input');f.doc.body.appendChild(input);
+    input.dispatchEvent(new f.win.KeyboardEvent('keydown',{key:'r',ctrlKey:true,altKey:true,bubbles:true}));
+    await wait(60);assert.equal(calls,1);
+  }finally{f.close();}
+});
 const answer={response:{choices:[{message:{content:JSON.stringify({segments:[{text:'睡眠',source:[0]},{text:'改善',source:[1]},{text:'记忆。',source:[2]}]})}}]}};
 test('hover whole sentence, move word highlights, no extra request, cleanup',async()=>{
   let count=0;const f=fixture(async()=>{count++;return answer;});
