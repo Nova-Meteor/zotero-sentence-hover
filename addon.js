@@ -109,12 +109,11 @@ var SentenceHover = (() => {
     box.style.cssText = 'position:fixed;z-index:2147483646;left:12px;top:12px;width:max-content;max-width:min(640px, calc(100vw - 24px));max-height:42vh;overflow:auto;box-sizing:border-box;padding:16px 18px;background:#fff;color:#182a31;border:1px solid #9bacb6;border-radius:12px;box-shadow:0 5px 28px #0003;font:15px/1.65 system-ui,sans-serif;display:none;user-select:text;';
     const close = html('button'); close.textContent = '×'; close.title = '关闭（Esc）';
     close.style.cssText = 'position:absolute;right:10px;top:8px;border:0;background:transparent;color:inherit;font-size:22px;cursor:pointer;';
-    const refresh = html('button'); refresh.textContent = '↻'; refresh.title = '重新翻译（Ctrl+Alt+R）';
+    const refresh = html('button'); refresh.textContent = '↻'; refresh.title = '重新翻译';
     refresh.setAttribute('aria-label', '重新翻译当前句子');
     refresh.style.cssText = 'position:absolute;right:35px;top:8px;border:0;background:transparent;color:inherit;font-size:20px;cursor:pointer;';
     const translation = html('div'); translation.style.cssText = 'font-size:17px;line-height:1.9;padding-right:45px;white-space:normal;overflow-wrap:anywhere;';
     box.append(close, refresh, translation); doc.body.appendChild(box);
-    box.title = 'Ctrl+Alt+R 重新翻译当前句子（macOS：⌘+Option+R）';
     function cancelHide() { win.clearTimeout(hideTimer); hideTimer = null; }
     function cancelPending() { win.clearTimeout(hoverTimer); hoverTimer = null; pending = null; }
     function scheduleHide() {
@@ -183,7 +182,7 @@ var SentenceHover = (() => {
         const translated = await translate(text, { force });
         if (disposed || ticket !== sequence || !current) return;
         result = translated; render();
-        refresh.title = force ? '已重新翻译；点击可再次重译' : '重新翻译（Ctrl+Alt+R）';
+        refresh.title = force ? '已重新翻译；点击可再次重译' : '重新翻译';
       } catch (e) {
         if (disposed || ticket !== sequence) return;
         if (force && result) { render(); translation.appendChild(doc.createTextNode('（重译失败，可再次按快捷键）')); }
