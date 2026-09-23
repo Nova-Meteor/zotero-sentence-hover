@@ -58,20 +58,21 @@ test('host editable field does not trigger PDF retranslation',async()=>{
     input.dispatchEvent(new f.host.KeyboardEvent('keydown',{key:'r',code:'KeyR',ctrlKey:true,altKey:true,bubbles:true}));await wait(50);assert.equal(calls,1);
   }finally{f.close();}
 });
-test('leaving delays close; entering popup keeps it visible until leaving again',async()=>{
+test('leaving closes immediately even with a legacy hideDelay preference',async()=>{
   const f=fixture(async()=>answer);
   try{
     f.move(12);await wait(280);const box=f.doc.getElementById('sentence-hover-popup');
-    f.move(600);await wait(80);assert.equal(box.style.display,'block');
+    f.move(600);await wait(0);assert.equal(box.style.display,'none');
+    await wait(50);f.move(12);await wait(280);
     box.dispatchEvent(new f.win.MouseEvent('mouseenter'));await wait(240);assert.equal(box.style.display,'block');
-    box.dispatchEvent(new f.win.MouseEvent('mouseleave'));await wait(240);assert.equal(box.style.display,'none');
+    box.dispatchEvent(new f.win.MouseEvent('mouseleave'));assert.equal(box.style.display,'none');
   }finally{f.close();}
 });
-test('brief sentence crossing retains popup and returning cancels pending translation',async()=>{
+test('changing sentence hides old popup immediately and returning reuses cache',async()=>{
   let calls=0;const f=fixture(async()=>{calls++;return answer;});
   try{
     f.move(12);await wait(280);const box=f.doc.getElementById('sentence-hover-popup');const before=box.textContent;
-    f.move(200);await wait(80);assert.equal(box.style.display,'block');assert.equal(box.textContent,before);
+    f.move(200);await wait(0);assert.equal(box.style.display,'none');await wait(80);
     f.move(12);await wait(280);assert.equal(calls,1);
   }finally{f.close();}
 });

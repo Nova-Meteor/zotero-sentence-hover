@@ -45,7 +45,7 @@ test('disk cache survives new plugin instance; force refresh replaces it without
 });
 test('saving timing settings retains cache and switching models isolates then restores it',async()=>{
   let calls=0;const api=setup(async()=>{calls++;return response;});
-  await api.translate('Memory.');api.save({...api.config(),hideDelay:700});await api.translate('Memory.');assert.equal(calls,1);
+  await api.translate('Memory.');api.save({...api.config(),delay:700});await api.translate('Memory.');assert.equal(calls,1);
   api.save({...api.config(),model:'another'});await api.translate('Memory.');assert.equal(calls,2);
   api.save({...api.config(),model:'test'});await api.translate('Memory.');assert.equal(calls,2);
 });

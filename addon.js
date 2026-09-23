@@ -14,7 +14,7 @@ var SentenceHover = (() => {
   } : null });
   let timer, timerWindow, running = false, generation = 0;
   let activeContext = null;
-  const defaults = { enabled: true, baseURL: '', model: '', apiKey: '', delay: 500, hideDelay: 450, maxChars: 1800 };
+  const defaults = { enabled: true, baseURL: '', model: '', apiKey: '', delay: 500, maxChars: 1800 };
   function config() {
     const c = {};
     for (const [key, fallback] of Object.entries(defaults)) c[key] = Zotero.Prefs.get(PREFIX + key, true) ?? fallback;
@@ -28,7 +28,6 @@ var SentenceHover = (() => {
       if (!(key in values)) continue;
       let value = values[key];
       if (key === 'delay') value = Math.max(200, Math.min(3000, Number(value) || 500));
-      if (key === 'hideDelay') value = Math.max(150, Math.min(2000, Number(value) || 450));
       if (typeof value === 'string') value = value.trim();
       Zotero.Prefs.set(PREFIX + key, value, true);
     }
@@ -102,7 +101,7 @@ var SentenceHover = (() => {
     const doc = win.document, pages = new Map();
     const contextToken = {};
     let current = null, result = null, hoverTimer = null, sequence = 0, lookup = 0, lastPoint = null, lastMove = 0, disposed = false;
-    let pending = null, hideTimer = null, overPopup = false, busy = false;
+    let pending = null, overPopup = false, busy = false;
     let pdfDocument = app.pdfDocument;
     const html = name => doc.createElementNS('http://www.w3.org/1999/xhtml', name);
     const box = html('div'); box.id = 'sentence-hover-popup';
@@ -114,12 +113,7 @@ var SentenceHover = (() => {
     refresh.style.cssText = 'position:absolute;right:35px;top:8px;border:0;background:transparent;color:inherit;font-size:20px;cursor:pointer;';
     const translation = html('div'); translation.style.cssText = 'font-size:17px;line-height:1.9;padding-right:45px;white-space:normal;overflow-wrap:anywhere;';
     box.append(close, refresh, translation); doc.body.appendChild(box);
-    function cancelHide() { win.clearTimeout(hideTimer); hideTimer = null; }
     function cancelPending() { win.clearTimeout(hoverTimer); hoverTimer = null; pending = null; }
-    function scheduleHide() {
-      if (overPopup || hideTimer !== null) return;
-      hideTimer = win.setTimeout(clear, config().hideDelay);
-    }
     function sameSentence(a, b) {
       return a && b && a.pageIndex === b.pageIndex && a.sentence.start === b.sentence.start && a.sentence.text === b.sentence.text;
     }
@@ -150,7 +144,7 @@ var SentenceHover = (() => {
       box.style.top = Math.max(margin, Math.min(top, height - margin - size.height)) + 'px';
     }
     function clear() {
-      sequence++; lookup++; cancelPending(); cancelHide(); current = null; result = null; busy = false; overPopup = false;
+      sequence++; lookup++; cancelPending(); current = null; result = null; busy = false; overPopup = false;
       box.style.display = 'none'; lastPoint = null;
       if (activeContext === contextToken) activeContext = null;
       refresh.disabled = false; refresh.textContent = '↻'; box.removeAttribute('aria-busy');
@@ -257,19 +251,18 @@ var SentenceHover = (() => {
         const hit = await locate(point.x, point.y);
         if (disposed || id !== lookup || lastPoint !== point) return;
         if (!hit) {
-          cancelPending(); scheduleHide();
+          clear();
           return;
         }
         activeContext = contextToken;
-        cancelHide();
         if (sameSentence(current, hit)) {
           cancelPending();
           const changed = current.word.id !== hit.word.id;
           current = hit; if (result && changed) render(); return;
         }
         if (sameSentence(pending, hit)) { pending = hit; return; }
-        cancelPending(); pending = hit;
-        // Keep the old popup until the next sentence passes its hover delay.
+        clear(); activeContext = contextToken; pending = hit;
+        // Hide the previous sentence immediately; only opening uses a delay.
         hoverTimer = win.setTimeout(() => {
           const next = pending; cancelPending();
           if (!next || disposed || overPopup) return;
@@ -299,11 +292,11 @@ var SentenceHover = (() => {
       event.preventDefault(); event.stopPropagation();
       retranslate();
     }
-    function enterPopup() { activeContext = contextToken; overPopup = true; lookup++; cancelHide(); cancelPending(); }
-    function exitPopup() { overPopup = false; scheduleHide(); }
+    function enterPopup() { activeContext = contextToken; overPopup = true; lookup++; cancelPending(); }
+    function exitPopup() { clear(); }
     function leave(event) {
       if (box.contains(event.relatedTarget)) { enterPopup(); return; }
-      overPopup = false; lookup++; cancelPending(); scheduleHide();
+      clear();
     }
     function scroll(event) { if (!box.contains(event.target)) clear(); }
     close.addEventListener('click', clear);

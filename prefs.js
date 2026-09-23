@@ -2,7 +2,7 @@ window.SHPrefs = {
   init() {
     const api = Zotero.SentenceHover;
     const get = name => document.getElementById('sh-' + name);
-    const keys = ['enabled','baseURL','model','apiKey','delay','hideDelay'];
+    const keys = ['enabled','baseURL','model','apiKey','delay'];
     const c = api.config();
     for (const key of keys) { if (key === 'enabled') get(key).checked = c[key]; else get(key).value = c[key]; }
     const save = () => {
