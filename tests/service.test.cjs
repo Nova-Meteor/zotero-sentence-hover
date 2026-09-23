@@ -4,7 +4,7 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 function setup(request, extra = {}) {
   const prefs=new Map(Object.entries({baseURL:'https://example.com/v1',model:'test',apiKey:'private-key'}).map(([k,v])=>['extensions.sentenceHover.'+k,v]));
-  const scope={URL, Zotero:{Prefs:{get:k=>prefs.get(k),set:(k,v)=>prefs.set(k,v)},HTTP:{request},Profile:{dir:'/profile'}},Services:{},Components:{},...extra};
+  const scope={URL, Zotero:{Prefs:{get:k=>prefs.get(k),set:(k,v)=>prefs.set(k,v)},HTTP:{request},Reader:{_readers:[]},Profile:{dir:'/profile'}},Services:{},Components:{},...extra};
   vm.createContext(scope);
   for(const file of ['core.js','cache.js','addon.js']) vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'..',file),'utf8'),scope);
   return scope.SentenceHover;
@@ -34,14 +34,28 @@ test('at most two distinct requests may run concurrently',async()=>{
 });
 test('disk cache survives new plugin instance; force refresh replaces it without storing credentials',async()=>{
   let disk=null,calls=0;
-  const extra={PathUtils:{join:(...a)=>a.join('/')},IOUtils:{exists:async()=>disk!==null,stat:async()=>({size:disk.length}),readJSON:async()=>JSON.parse(disk),writeJSON:async(p,data,options)=>{assert.equal(options.tmpPath,p+'.tmp');disk=JSON.stringify(data);}}};
+  const reader={_item:{getFilePathAsync:async()=>'/storage/DRMTBZNF/paper.pdf'}};
+  const extra={PathUtils:{join:(...a)=>a.join('/'),parent:p=>p.slice(0,p.lastIndexOf('/'))},IOUtils:{exists:async p=>p.endsWith('.pdf')||disk!==null,stat:async()=>({size:disk.length}),readJSON:async()=>JSON.parse(disk),writeJSON:async(p,data,options)=>{assert.equal(p,'/storage/DRMTBZNF/sentence-hover-cache.json');assert.equal(options.tmpPath,p+'.tmp');disk=JSON.stringify(data);}}};
   const request=async()=>{calls++;return response;};
-  const a=setup(request,extra);await a.translate('Memory.');await a.flushCache();
+  const a=setup(request,extra);await a.translate('Memory.',{reader});await a.flushCache();
   assert.ok(disk.includes('Memory.'));assert.ok(!disk.includes('private-key'));
-  const b=setup(request,extra);await b.translate('Memory.');assert.equal(calls,1);
-  await b.translate('Memory.',{force:true});assert.equal(calls,2);
+  const b=setup(request,extra);await b.translate('Memory.',{reader});assert.equal(calls,1);
+  await b.translate('Memory.',{force:true,reader});assert.equal(calls,2);
   await b.reset();assert.equal(JSON.parse(disk).entries.length,0);
-  const c=setup(request,extra);await c.translate('Memory.');assert.equal(calls,3);
+  const c=setup(request,extra);await c.translate('Memory.',{reader});assert.equal(calls,3);
+});
+test('article directories are isolated; settings test never writes an article cache',async()=>{
+  const disk=new Map();let calls=0;
+  const extra={PathUtils:{join:(...a)=>a.join('/'),parent:p=>p.slice(0,p.lastIndexOf('/'))},IOUtils:{exists:async p=>p.endsWith('.pdf')||disk.has(p),stat:async p=>({size:disk.get(p).length}),readJSON:async p=>JSON.parse(disk.get(p)),writeJSON:async(p,d)=>disk.set(p,JSON.stringify(d))}};
+  const a={_item:{getFilePathAsync:async()=>'/storage/AAAA/paper.pdf'}},b={_item:{getFilePathAsync:async()=>'/storage/BBBB/paper.pdf'}};
+  const api=setup(async()=>{calls++;return response;},extra);
+  await api.translate('Memory.',{reader:a});await api.translate('Memory.',{reader:b});await api.flushCache();
+  assert.equal(calls,2);assert.equal(disk.size,2);
+  await api.translate('Memory.',{reader:a});assert.equal(calls,2);
+  await api.translate('Settings example.');await api.flushCache();assert.equal(disk.size,2);
+  const missing={_item:{getFilePathAsync:async()=>false}};
+  await api.translate('Missing.',{reader:missing});await api.flushCache();assert.equal(disk.size,2);
+  assert.ok(api.diagnostic().cache.error.includes('尚未'));
 });
 test('saving timing settings retains cache and switching models isolates then restores it',async()=>{
   let calls=0;const api=setup(async()=>{calls++;return response;});

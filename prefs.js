@@ -23,11 +23,11 @@ window.SHPrefs = {
     };
     get('clear').onclick = async () => {
       get('clear').disabled = true;
-      try { await api.reset(); get('status').textContent = '已清空内存及本地句子缓存。'; }
+      try { await api.reset(); get('status').textContent = '已清空本次运行已加载文章的缓存。其他文章的缓存文件保留。'; }
       catch(e) { get('status').textContent = e.message; }
       finally { get('clear').disabled = false; }
     };
     const cacheStatus = api.diagnostic().cache;
-    get('status').textContent = cacheStatus.error || '缓存将保存在本机，重启后可复用。Ctrl+Alt+R 可重新翻译当前弹窗的句子。';
+    get('status').textContent = cacheStatus.error || '缓存保存在各 PDF 所在目录，重启后可复用。Ctrl+Alt+R 可重新翻译当前弹窗的句子。';
   }
 };

@@ -3,15 +3,42 @@ var SentenceHover = (() => {
   'use strict';
   const PREFIX = 'extensions.sentenceHover.';
   const contexts = new Map(), inflight = new Map(), requests = new Set();
-  const cachePath = typeof PathUtils !== 'undefined' ? PathUtils.join(Zotero.Profile.dir, 'sentence-hover-cache.json') : null;
-  const cache = SHCache.create({ storage: cachePath ? {
-    async read() {
-      if (!(await IOUtils.exists(cachePath))) return null;
-      if ((await IOUtils.stat(cachePath)).size > 8000000) throw new Error('Cache too large');
-      return IOUtils.readJSON(cachePath);
-    },
-    write: data => IOUtils.writeJSON(cachePath, data, { tmpPath: cachePath + '.tmp' })
-  } : null });
+  const articleCaches = new Map(), memoryReaders = new WeakMap();
+  let nextMemoryReader = 0;
+  async function cacheFor(reader) {
+    let cachePath = null, warning = '';
+    if (reader && typeof PathUtils !== 'undefined') {
+      try {
+        const item = reader._item || Zotero.Items.get(reader.itemID);
+        const file = await item.getFilePathAsync();
+        if (file && await IOUtils.exists(file)) cachePath = PathUtils.join(PathUtils.parent(file), 'sentence-hover-cache.json');
+        else warning = 'PDF 文件尚未在本机就绪，当前文章仅使用内存缓存。';
+      } catch (_) { warning = '无法获取 PDF 所在目录，当前文章仅使用内存缓存。'; }
+    }
+    if (reader && !memoryReaders.has(reader)) memoryReaders.set(reader, ++nextMemoryReader);
+    const id = cachePath || (reader ? 'memory-reader-' + memoryReaders.get(reader) : 'memory-test');
+    if (!articleCaches.has(id)) {
+      const cache = SHCache.create({ storage: cachePath ? {
+        async read() {
+          if (!(await IOUtils.exists(cachePath))) return null;
+          if ((await IOUtils.stat(cachePath)).size > 8000000) throw new Error('Cache too large');
+          return IOUtils.readJSON(cachePath);
+        },
+        write: data => IOUtils.writeJSON(cachePath, data, { tmpPath: cachePath + '.tmp' })
+      } : null });
+      articleCaches.set(id, { id, path: cachePath, warning, cache });
+    }
+    return articleCaches.get(id);
+  }
+  async function flushCaches() { await Promise.all([...articleCaches.values()].map(s => s.cache.flush())); }
+  function cacheStatus() {
+    const stores = [...articleCaches.values()];
+    return {
+      persistent: stores.some(s => s.path), count: stores.reduce((n,s) => n+s.cache.status().count,0),
+      error: stores.map(s => s.cache.status().error || s.warning).filter(Boolean).join('; '),
+      paths: stores.filter(s => s.path).map(s => s.path)
+    };
+  }
   let timer, timerWindow, running = false, generation = 0;
   let activeContext = null;
   const defaults = { enabled: true, baseURL: '', model: '', apiKey: '', delay: 500, maxChars: 1800 };
@@ -39,9 +66,15 @@ var SentenceHover = (() => {
     requests.clear(); inflight.clear();
     for (const ctx of contexts.values()) ctx.clear();
   }
-  async function reset() { cancelRequests(); await cache.clear(); }
-  async function translate(text, { force = false } = {}) {
+  async function reset() {
+    cancelRequests();
+    const results = await Promise.allSettled([...articleCaches.values()].map(s => s.cache.clear()));
+    const failed = results.find(r => r.status === 'rejected');
+    if (failed) throw failed.reason;
+  }
+  async function translate(text, { force = false, reader = null } = {}) {
     const epoch = generation;
+    const store = await cacheFor(reader), cache = store.cache;
     await cache.ready;
     if (epoch !== generation) throw new Error('请求已取消。');
     const c = config();
@@ -50,9 +83,10 @@ var SentenceHover = (() => {
     const tokens = SHCore.words(text);
     if (!tokens.length) throw new Error('未识别到英文单词。');
     const key = cache.key(SHCore.endpoint(c.baseURL), c.model, text);
+    const requestKey = JSON.stringify([store.id, key]);
     const cached = force ? null : cache.get(key);
     if (cached) return cached;
-    if (inflight.has(key)) return inflight.get(key);
+    if (inflight.has(requestKey)) return inflight.get(requestKey);
     if (inflight.size >= 2) throw new Error('正在处理其他句子，请稍后再悬停。');
     const promise = Promise.resolve().then(async () => {
       let xhr;
@@ -91,13 +125,13 @@ var SentenceHover = (() => {
         throw new Error('请求未完成，请检查网络、API 地址或超时设置。');
       } finally {
         requests.delete(xhr);
-        if (inflight.get(key) === promise) inflight.delete(key);
+        if (inflight.get(requestKey) === promise) inflight.delete(requestKey);
       }
     });
-    inflight.set(key, promise);
+    inflight.set(requestKey, promise);
     return promise;
   }
-  function makeContext(win, app, hostWindow) {
+  function makeContext(win, app, hostWindow, reader) {
     const doc = win.document, pages = new Map();
     const contextToken = {};
     let current = null, result = null, hoverTimer = null, sequence = 0, lookup = 0, lastPoint = null, lastMove = 0, disposed = false;
@@ -178,7 +212,7 @@ var SentenceHover = (() => {
       box.setAttribute('aria-busy', 'true');
       position();
       try {
-        const translated = await translate(text, { force });
+        const translated = await translate(text, { force, reader });
         if (disposed || ticket !== sequence || !current) return;
         result = translated; render();
         refresh.title = force ? '已重新翻译；点击可再次重译' : '重新翻译';
@@ -349,7 +383,7 @@ var SentenceHover = (() => {
   function scan() {
     if (!running) return;
     const found = new Set();
-    function walk(win, depth = 0, hostWindow = null) {
+    function walk(win, depth = 0, hostWindow = null, reader = null) {
       if (!win || depth > 5) return;
       try {
         const native = win.wrappedJSObject || win;
@@ -357,19 +391,19 @@ var SentenceHover = (() => {
         if (app?.pdfDocument && win.document.body) {
           found.add(win);
           if (contexts.has(win) && contexts.get(win).doc !== win.document) { contexts.get(win).destroy(); contexts.delete(win); }
-          if (!contexts.has(win)) contexts.set(win, makeContext(win, app, hostWindow));
+          if (!contexts.has(win)) contexts.set(win, makeContext(win, app, hostWindow, reader));
         }
-        for (const iframe of win.document.querySelectorAll('iframe')) walk(iframe.contentWindow, depth + 1, hostWindow);
+        for (const iframe of win.document.querySelectorAll('iframe')) walk(iframe.contentWindow, depth + 1, hostWindow, reader);
       } catch (_) {}
     }
-    for (const reader of Zotero.Reader._readers || []) walk(reader._iframeWindow, 0, reader._window);
+    for (const reader of Zotero.Reader._readers || []) walk(reader._iframeWindow, 0, reader._window, reader);
     for (const [win, ctx] of contexts) if (!found.has(win)) { ctx.destroy(); contexts.delete(win); }
   }
   function start() { running = true; timerWindow = Zotero.getMainWindow(); scan(); timer = timerWindow.setInterval(scan, 1500); }
   async function stop() {
     running = false; timerWindow?.clearInterval(timer); cancelRequests();
     for (const ctx of contexts.values()) ctx.destroy(); contexts.clear();
-    await cache.flush();
+    await flushCaches();
   }
-  return { start, stop, config, save, translate, reset, flushCache: () => cache.flush(), diagnostic: () => ({ readers: (Zotero.Reader._readers || []).length, connectedPDFViews: contexts.size, cachedSentences: cache.status().count, cache: cache.status() }) };
+  return { start, stop, config, save, translate, reset, flushCache: flushCaches, diagnostic: () => ({ readers: (Zotero.Reader._readers || []).length, connectedPDFViews: contexts.size, cachedSentences: cacheStatus().count, cache: cacheStatus() }) };
 })();
