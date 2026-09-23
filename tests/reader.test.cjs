@@ -48,6 +48,34 @@ test('crossing line gap within same sentence retains popup and updates next-line
     f.move(400,29);await wait(140);assert.equal(box.style.display,'none');
   }finally{f.close();}
 });
+test('source word highlights before API call, moves with pointer and clears without annotations',async()=>{
+  let calls=0;const f=fixture(async()=>{calls++;return answer;},300,'normal',300);
+  try{
+    const overlay=f.doc.getElementById('sentence-hover-word-highlight');
+    f.move(12);await wait(60);
+    assert.equal(calls,0);assert.equal(overlay.style.pointerEvents,'none');
+    assert.equal(overlay.children.length,5);assert.equal(overlay.firstChild.style.left,'300px');
+    assert.equal(overlay.firstChild.style.top,'310px');
+    f.move(64);await wait(60);
+    assert.equal(overlay.children.length,8);assert.equal(overlay.firstChild.style.left,'348px');
+    await wait(180);assert.equal(calls,1);
+    f.move(44);await wait(60);assert.equal(overlay.children.length,8);
+    f.doc.dispatchEvent(new f.win.Event('scroll'));assert.equal(overlay.children.length,0);
+    f.api.stop();assert.equal(f.doc.getElementById('sentence-hover-word-highlight'),null);
+  }finally{f.close();}
+});
+test('source highlight switch updates immediately while translation and target highlighting continue',async()=>{
+  let calls=0;const f=fixture(async()=>{calls++;return answer;});
+  try{
+    f.move(12);await wait(280);
+    const overlay=f.doc.getElementById('sentence-hover-word-highlight'),box=f.doc.getElementById('sentence-hover-popup');
+    assert.equal(f.api.config().highlightSourceWord,true);assert.ok(overlay.children.length);
+    f.api.setSourceHighlight(false);assert.equal(overlay.children.length,0);assert.equal(f.api.config().highlightSourceWord,false);
+    f.move(64);await wait(70);assert.equal(overlay.children.length,0);assert.equal(box.style.display,'block');
+    assert.equal([...box.querySelectorAll('span')].find(s=>s.style.background)?.textContent,'改善');
+    f.api.setSourceHighlight(true);assert.equal(overlay.children.length,8);assert.equal(calls,1);
+  }finally{f.close();}
+});
 test('appearance updates visible popup without dismissing it or making another request',async()=>{
   let calls=0;const f=fixture(async()=>{calls++;return answer;},300,'normal',300);
   try{

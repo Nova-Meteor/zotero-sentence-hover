@@ -42,7 +42,7 @@ var SentenceHover = (() => {
   let timer, timerWindow, running = false, generation = 0;
   let activeContext = null;
   const appearanceRanges = { fontSize: [12, 32, 17], popupWidth: [240, 1200, 640], transparency: [0, 80, 0] };
-  const defaults = { enabled: true, baseURL: '', model: '', apiKey: '', delay: 500, maxChars: 1800, fontSize: 17, popupWidth: 640, transparency: 0 };
+  const defaults = { enabled: true, highlightSourceWord: true, baseURL: '', model: '', apiKey: '', delay: 500, maxChars: 1800, fontSize: 17, popupWidth: 640, transparency: 0 };
   function normalizeAppearance(values) {
     return Object.fromEntries(Object.entries(appearanceRanges).map(([key, [min, max, fallback]]) => {
       const n = values[key] === '' || values[key] == null ? fallback : Number(values[key]);
@@ -59,6 +59,10 @@ var SentenceHover = (() => {
     for (const [key,value] of Object.entries(appearance)) Zotero.Prefs.set(PREFIX + key, value, true);
     for (const ctx of contexts.values()) ctx.applyAppearance();
     return appearance;
+  }
+  function setSourceHighlight(enabled) {
+    Zotero.Prefs.set(PREFIX + 'highlightSourceWord', !!enabled, true);
+    for (const ctx of contexts.values()) ctx.refreshHighlight();
   }
   function save(values) {
     const baseURL = String(values.baseURL || '').trim();
@@ -153,6 +157,23 @@ var SentenceHover = (() => {
     let pending = null, overPopup = false, busy = false, hideTimer = null;
     let pdfDocument = app.pdfDocument;
     const html = name => doc.createElementNS('http://www.w3.org/1999/xhtml', name);
+    const wordOverlay = html('div'); wordOverlay.id = 'sentence-hover-word-highlight';
+    wordOverlay.setAttribute('aria-hidden', 'true');
+    // Blend the whole highlight group with the PDF so black glyphs stay black.
+    // Group opacity also prevents overlapping character boxes from darkening.
+    wordOverlay.style.cssText = 'position:fixed;inset:0;z-index:2147483645;pointer-events:none;mix-blend-mode:multiply;opacity:.32;';
+    doc.body.appendChild(wordOverlay);
+    function highlightWord(hit) {
+      wordOverlay.replaceChildren();
+      if (!config().highlightSourceWord || !hit) return;
+      for (const rect of hit.wordRects || []) {
+        const mark = html('div');
+        mark.style.cssText = 'position:absolute;pointer-events:none;background:rgb(255,225,100);';
+        mark.style.left = rect.left + 'px'; mark.style.top = rect.top + 'px';
+        mark.style.width = (rect.right-rect.left) + 'px'; mark.style.height = (rect.bottom-rect.top) + 'px';
+        wordOverlay.appendChild(mark);
+      }
+    }
     const box = html('div'); box.id = 'sentence-hover-popup';
     box.style.cssText = 'position:fixed;z-index:2147483646;left:12px;top:12px;width:max-content;max-width:min(640px, calc(100vw - 24px));max-height:42vh;overflow:auto;box-sizing:border-box;padding:16px 18px;background:#fff;color:#182a31;border:1px solid #9bacb6;border-radius:12px;box-shadow:0 5px 28px #0003;font:15px/1.65 system-ui,sans-serif;display:none;user-select:text;';
     const close = html('button'); close.textContent = '×'; close.title = '关闭（Esc）';
@@ -208,6 +229,7 @@ var SentenceHover = (() => {
     function clear() {
       sequence++; lookup++; cancelPending(); cancelHide(); current = null; result = null; busy = false; overPopup = false;
       box.style.display = 'none'; lastPoint = null;
+      wordOverlay.replaceChildren();
       if (activeContext === contextToken) activeContext = null;
       refresh.disabled = false; refresh.textContent = '↻'; box.removeAttribute('aria-busy');
     }
@@ -285,6 +307,7 @@ var SentenceHover = (() => {
       // Convert the full sentence's PDF rectangles back into viewport coordinates.
       // The anchor is sentence-wide, so moving between its words does not move the popup.
       let bounds = { left: x, right: x, top: y - 12, bottom: y + 12 };
+      let wordRects = [];
       try {
         const sentenceRects = page.anchors.filter(a => a.end > hit.sentence.start && a.start < hit.sentence.end)
         .map(a => {
@@ -295,8 +318,9 @@ var SentenceHover = (() => {
           const r = [a1[0], a1[1], a2[0], a2[1]];
           const screenX = v => rect.left + (pageEl.clientLeft + v * pageEl.clientWidth / view.viewport.width) * rect.width / pageEl.offsetWidth;
           const screenY = v => rect.top + (pageEl.clientTop + v * pageEl.clientHeight / view.viewport.height) * rect.height / pageEl.offsetHeight;
-          return { left: screenX(Math.min(r[0],r[2])), right: screenX(Math.max(r[0],r[2])), top: screenY(Math.min(r[1],r[3])), bottom: screenY(Math.max(r[1],r[3])) };
+          return { start: a.start, end: a.end, left: screenX(Math.min(r[0],r[2])), right: screenX(Math.max(r[0],r[2])), top: screenY(Math.min(r[1],r[3])), bottom: screenY(Math.max(r[1],r[3])) };
         }).filter(r => Object.values(r).every(Number.isFinite));
+        wordRects = sentenceRects.filter(r => r.end > hit.sentence.start + hit.word.start && r.start < hit.sentence.start + hit.word.end && r.right > r.left && r.bottom > r.top);
         if (sentenceRects.length) bounds = {
         left: Math.min(...sentenceRects.map(r => r.left)), right: Math.max(...sentenceRects.map(r => r.right)),
         top: Math.min(...sentenceRects.map(r => r.top)), bottom: Math.max(...sentenceRects.map(r => r.bottom))
@@ -304,7 +328,7 @@ var SentenceHover = (() => {
       } catch (_) {
         // Geometry is optional: a valid sentence must still reach translation.
       }
-      return { ...hit, pageIndex, bounds, point: { x, y } };
+      return { ...hit, pageIndex, bounds, wordRects, point: { x, y } };
     }
     async function move(event) {
       if (box.contains(event.target)) { enterPopup(); return; }
@@ -327,10 +351,12 @@ var SentenceHover = (() => {
         if (sameSentence(current, hit)) {
           cancelPending();
           const changed = current.word.id !== hit.word.id;
+          highlightWord(hit);
           current = hit; if (result && changed) render(); return;
         }
-        if (sameSentence(pending, hit)) { pending = hit; return; }
+        if (sameSentence(pending, hit)) { pending = hit; highlightWord(hit); return; }
         clear(); activeContext = contextToken; pending = hit;
+        highlightWord(hit);
         // Hide the previous sentence immediately; only opening uses a delay.
         hoverTimer = win.setTimeout(() => {
           const next = pending; cancelPending();
@@ -394,8 +420,8 @@ var SentenceHover = (() => {
     doc.addEventListener('scroll', scroll, true);
     win.addEventListener('resize', clear);
     win.addEventListener('blur', clear);
-    return { clear, doc, applyAppearance, destroy() {
-      disposed = true; clear(); pages.clear(); box.remove();
+    return { clear, doc, applyAppearance, refreshHighlight: () => highlightWord(current || pending), destroy() {
+      disposed = true; clear(); pages.clear(); box.remove(); wordOverlay.remove();
       doc.removeEventListener('mousemove', move, true); doc.removeEventListener('selectionchange', selection);
       for (const w of keyWindows) w.removeEventListener('keydown', key, true);
       doc.removeEventListener('mouseleave', leave);
@@ -428,5 +454,5 @@ var SentenceHover = (() => {
     for (const ctx of contexts.values()) ctx.destroy(); contexts.clear();
     await flushCaches();
   }
-  return { start, stop, config, save, saveAppearance, normalizeAppearance, translate, reset, flushCache: flushCaches, diagnostic: () => ({ readers: (Zotero.Reader._readers || []).length, connectedPDFViews: contexts.size, cachedSentences: cacheStatus().count, cache: cacheStatus() }) };
+  return { start, stop, config, save, saveAppearance, setSourceHighlight, normalizeAppearance, translate, reset, flushCache: flushCaches, diagnostic: () => ({ readers: (Zotero.Reader._readers || []).length, connectedPDFViews: contexts.size, cachedSentences: cacheStatus().count, cache: cacheStatus() }) };
 })();

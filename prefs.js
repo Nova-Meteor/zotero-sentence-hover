@@ -18,9 +18,14 @@ window.SHPrefs = {
       feedbackTimers.clear();
     }, { once: true });
     const appearanceKeys = ['fontSize','popupWidth','transparency'];
-    const keys = ['enabled','baseURL','model','apiKey','delay',...appearanceKeys];
+    const booleanKeys = new Set(['enabled','highlightSourceWord']);
+    const keys = ['enabled','highlightSourceWord','baseURL','model','apiKey','delay',...appearanceKeys];
     const c = api.config();
-    for (const key of keys) { if (key === 'enabled') get(key).checked = c[key]; else get(key).value = c[key]; }
+    for (const key of keys) { if (booleanKeys.has(key)) get(key).checked = c[key]; else get(key).value = c[key]; }
+    get('highlightSourceWord').onchange = () => {
+      api.setSourceHighlight(get('highlightSourceWord').checked);
+      notify('save-status', get('highlightSourceWord').checked ? '原文单词高亮已开启。' : '原文单词高亮已关闭。');
+    };
     const appearanceValues = () => Object.fromEntries(appearanceKeys.map(key => [key, get(key).value]));
     const preview = () => {
       const a = api.normalizeAppearance(appearanceValues());
@@ -46,7 +51,7 @@ window.SHPrefs = {
     get('defaultAppearance').onclick = () => applyAppearance({ fontSize:17, popupWidth:640, transparency:0 }, 'default-status');
     preview();
     const save = () => {
-      const values = Object.fromEntries(keys.map(key => [key, key === 'enabled' ? get(key).checked : get(key).value]));
+      const values = Object.fromEntries(keys.map(key => [key, booleanKeys.has(key) ? get(key).checked : get(key).value]));
       api.save(values);
     };
     get('save').onclick = () => { try { save(); notify('save-status', '设置已保存。'); } catch(e) { notify('save-status', e.message || '保存失败，请重试。'); } };
