@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "句译随行 Sentence Hover",
-  "version": "0.3.10",
+  "version": "1.0.0",
   "description": "悬停翻译 PDF 英文整句，并联动高亮中文对应词语。",
   "author": "Sentence Hover contributors",
   "applications": {"zotero": {"id": "sentence-hover@local", "update_url": "https://sentence-hover.invalid/updates.json", "strict_min_version": "10.0", "strict_max_version": "10.*"}}
