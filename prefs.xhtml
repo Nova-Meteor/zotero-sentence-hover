@@ -1,26 +1,58 @@
-<vbox xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul" xmlns:html="http://www.w3.org/1999/xhtml" onload="window.SHPrefs.init()">
-  <html:div style="max-width:680px;padding:16px;font:14px/1.7 system-ui;">
-    <html:h2>句译随行</html:h2>
-    <html:p>在 PDF 的英文单词上停留片刻，自动翻译所在句子。移到同句其他词时，中文对应词语随之高亮。</html:p>
-    <html:p><html:label><html:input id="sh-enabled" type="checkbox"/> 启用悬停翻译</html:label></html:p>
-    <html:p><html:label for="sh-baseURL">API 基础地址（兼容 Chat Completions）</html:label><html:br/>
-      <html:input id="sh-baseURL" type="url" style="width:95%" placeholder="https://你的服务商地址/v1"/>
-      <html:br/><html:small>填写服务商给出的基础地址；也可填写完整的 /chat/completions 地址。支持本机 HTTP 服务。</html:small></html:p>
-    <html:p><html:label for="sh-model">模型名称</html:label><html:br/><html:input id="sh-model" type="text" style="width:95%" placeholder="填写服务商支持的模型 ID"/></html:p>
-    <html:p><html:label for="sh-apiKey">API 密钥</html:label><html:br/><html:input id="sh-apiKey" type="password" autocomplete="off" style="width:95%"/></html:p>
-    <html:p><html:label for="sh-delay">悬停等待时间（毫秒）</html:label> <html:input id="sh-delay" type="number" min="200" max="3000" step="100" style="width:90px"/></html:p>
-    <html:h3>弹窗外观</html:h3>
-    <html:p><html:label for="sh-fontSize">译文字号（像素）</html:label> <html:input id="sh-fontSize" type="number" min="12" max="32" step="1" style="width:90px"/></html:p>
-    <html:p><html:label for="sh-popupWidth">弹窗最大宽度（像素）</html:label> <html:input id="sh-popupWidth" type="number" min="240" max="1200" step="10" style="width:90px"/><html:br/><html:small>短句自动收窄，长句达到此宽度后换行；不会超出阅读器边界。</html:small></html:p>
-    <html:p><html:label for="sh-transparency">背景透明度</html:label> <html:input id="sh-transparency" type="range" min="0" max="80" step="1"/> <html:span id="sh-transparencyValue"/><html:br/><html:small>0% 为不透明，80% 最透明。文字、按钮和高亮保持清晰。</html:small></html:p>
-    <html:div style="padding:16px;background:repeating-linear-gradient(135deg,#d8dfe4 0px,#d8dfe4 12px,#eef1f3 12px,#eef1f3 24px);border-radius:10px;overflow:hidden;">
-      <html:div id="sh-preview" style="width:max-content;box-sizing:border-box;padding:16px 18px;border:1px solid #9bacb6;border-radius:12px;color:#182a31;line-height:1.9;overflow-wrap:anywhere;">研究表明，<html:span style="background:#ffe28a;border-radius:3px;">睡眠</html:span>有助于巩固记忆，并改善学习表现。这段文字用于预览弹窗的字号、宽度和背景透明度。</html:div>
+<vbox xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul" xmlns:html="http://www.w3.org/1999/xhtml" id="sh-preferences" onload="window.SHPrefs.init()">
+  <groupbox>
+    <label><html:h2>翻译服务</html:h2></label>
+    <html:div class="sh-form">
+      <html:label for="sh-baseURL">API 地址</html:label>
+      <html:input id="sh-baseURL" type="url" placeholder="https://你的服务商地址/v1" aria-describedby="sh-api-help"/>
+      <html:label for="sh-model">模型名称</html:label>
+      <html:input id="sh-model" type="text" placeholder="服务商提供的模型 ID"/>
+      <html:label for="sh-apiKey">API 密钥</html:label>
+      <html:input id="sh-apiKey" type="password" autocomplete="off"/>
     </html:div>
-    <html:p><html:button id="sh-saveAppearance" type="button">保存外观</html:button> <html:button id="sh-defaultAppearance" type="button">恢复默认外观</html:button></html:p>
-    <html:p>移入弹窗可保持显示并复制译文。按 Ctrl+Alt+R 重译当前句子（macOS：⌘+Option+R），跳过缓存并更新译文；请求进行中不重复发送。也可点击弹窗右上角 ↻，处理中按钮显示 …。</html:p>
-    <html:p><html:button id="sh-save" type="button">保存设置</html:button> <html:button id="sh-test" type="button">保存并测试翻译</html:button> <html:button id="sh-clear" type="button">清空已加载文章缓存</html:button></html:p>
-    <html:p id="sh-status" role="status" style="white-space:pre-wrap"/>
-    <html:p><html:small>测试及快捷重译会重新调用 API，按服务商规则计费。密钥保存在本机 Zotero 首选项中（未加密）。原句、译文及词语对应关系保存在 各 PDF 所在目录的 sentence-hover-cache.json 中，每个目录最多 1000 句，90 天未使用的缓存失效；缓存文件不保存 API 密钥。更换服务或模型会使用独立缓存；清空按钮只处理本次运行已加载的文章缓存。没有独立译法的冠词、助动词可能不高亮。</html:small></html:p>
-    <html:p><html:small>试用版 0.3.1 · 面向 Zotero 10 标准 PDF 视图。需要可提取文本的 PDF；扫描件需先 OCR。跨页句子和复杂排版暂不保证完整断句。</html:small></html:p>
-  </html:div>
+    <html:p id="sh-api-help" class="sh-help">支持 Chat Completions 兼容接口。可填写基础地址或完整接口地址；本机服务支持 HTTP。</html:p>
+    <html:div class="sh-actions">
+      <html:button id="sh-test" type="button">保存并测试翻译</html:button>
+    </html:div>
+    <html:p id="sh-test-status" class="sh-feedback" role="status" aria-live="polite"/>
+  </groupbox>
+  <groupbox>
+    <label><html:h2>阅读行为</html:h2></label>
+    <html:label class="sh-check"><html:input id="sh-enabled" type="checkbox"/>启用悬停翻译</html:label>
+    <html:div class="sh-form">
+      <html:label for="sh-delay">悬停等待时间</html:label>
+      <html:div class="sh-control"><html:input id="sh-delay" type="number" min="200" max="3000" step="100"/><html:span>毫秒</html:span></html:div>
+    </html:div>
+    <html:p class="sh-help">重新翻译：Ctrl+Alt+R（macOS：⌘+Option+R），或点击弹窗中的 ↻。</html:p>
+    <html:div class="sh-actions"><html:button id="sh-save" type="button">保存设置</html:button><html:span id="sh-save-status" class="sh-action-status" role="status" aria-live="polite"/></html:div>
+  </groupbox>
+  <groupbox>
+    <label><html:h2>弹窗外观</html:h2></label>
+    <html:div class="sh-form">
+      <html:label for="sh-fontSize">译文字号</html:label>
+      <html:div class="sh-control"><html:input id="sh-fontSize" type="range" min="12" max="32" step="1"/><html:span id="sh-fontSizeValue" class="sh-slider-value"/></html:div>
+      <html:label for="sh-popupWidth">最大宽度</html:label>
+      <html:div class="sh-control"><html:input id="sh-popupWidth" type="range" min="240" max="1200" step="10"/><html:span id="sh-popupWidthValue" class="sh-slider-value"/></html:div>
+      <html:label for="sh-transparency">背景透明度</html:label>
+      <html:div class="sh-control"><html:input id="sh-transparency" type="range" min="0" max="80" step="1"/><html:span id="sh-transparencyValue" class="sh-slider-value"/></html:div>
+    </html:div>
+    <html:details class="sh-preview-details" open="open">
+      <html:summary>效果预览</html:summary>
+      <html:div class="sh-preview-stage">
+        <html:div id="sh-preview">研究表明，<html:span class="sh-preview-highlight">睡眠</html:span>有助于巩固记忆，并改善学习表现。这段文字用于预览弹窗的字号、宽度和背景透明度。</html:div>
+      </html:div>
+    </html:details>
+    <html:div class="sh-actions">
+      <html:button id="sh-saveAppearance" type="button">保存外观</html:button>
+      <html:span id="sh-appearance-status" class="sh-action-status" role="status" aria-live="polite"/>
+      <html:button id="sh-defaultAppearance" type="button">恢复默认外观</html:button>
+      <html:span id="sh-default-status" class="sh-action-status" role="status" aria-live="polite"/>
+    </html:div>
+  </groupbox>
+  <groupbox>
+    <label><html:h2>翻译缓存</html:h2></label>
+    <html:p class="sh-help">缓存保存在各 PDF 所在目录的 <html:code>sentence-hover-cache.json</html:code>，重启后可复用。</html:p>
+    <html:p class="sh-help">每个目录最多 1000 句，90 天未使用的缓存失效。不同服务和模型使用独立缓存。</html:p>
+    <html:p class="sh-help">仅清空本次运行已加载的文章缓存，其他文章不受影响。</html:p>
+    <html:div class="sh-actions"><html:button id="sh-clear" type="button">清空已加载文章缓存</html:button><html:span id="sh-clear-status" class="sh-action-status" role="status" aria-live="polite"/></html:div>
+  </groupbox>
 </vbox>

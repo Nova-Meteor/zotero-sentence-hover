@@ -1,7 +1,22 @@
 window.SHPrefs = {
   init() {
+    const root = document.getElementById('sh-preferences');
+    if (!root || root.getAttribute('data-initialized') === 'true') return;
     const api = Zotero.SentenceHover;
     const get = name => document.getElementById('sh-' + name);
+    const feedbackTimers = new Map();
+    const notify = (name, message) => {
+      window.clearTimeout(feedbackTimers.get(name));
+      const node = get(name);
+      node.textContent = message;
+      feedbackTimers.set(name, window.setTimeout(() => {
+        node.textContent = ''; feedbackTimers.delete(name);
+      }, 2000));
+    };
+    window.addEventListener('unload', () => {
+      for (const timer of feedbackTimers.values()) window.clearTimeout(timer);
+      feedbackTimers.clear();
+    }, { once: true });
     const appearanceKeys = ['fontSize','popupWidth','transparency'];
     const keys = ['enabled','baseURL','model','apiKey','delay',...appearanceKeys];
     const c = api.config();
@@ -12,40 +27,68 @@ window.SHPrefs = {
       get('preview').style.fontSize = a.fontSize + 'px';
       get('preview').style.maxWidth = 'min(' + a.popupWidth + 'px, 100%)';
       get('preview').style.backgroundColor = 'rgba(255, 255, 255, ' + (1-a.transparency/100) + ')';
+      get('fontSizeValue').textContent = a.fontSize + ' 像素';
+      get('popupWidthValue').textContent = a.popupWidth + ' 像素';
       get('transparencyValue').textContent = a.transparency + '%';
     };
-    for (const key of appearanceKeys) get(key).addEventListener('input', preview);
-    const applyAppearance = values => {
-      const a = api.saveAppearance(values);
-      for (const key of appearanceKeys) get(key).value = a[key];
-      preview(); get('status').textContent = '外观已保存，已打开的阅读器立即生效。';
+    for (const key of appearanceKeys) {
+      get(key).addEventListener('input', preview);
+      get(key).addEventListener('change', preview);
+    }
+    const applyAppearance = (values, target = 'appearance-status') => {
+      try {
+        const a = api.saveAppearance(values);
+        for (const key of appearanceKeys) get(key).value = a[key];
+        preview(); notify(target, target === 'default-status' ? '已恢复默认外观。' : '外观已保存。');
+      } catch(e) { notify(target, e.message || '保存失败，请重试。'); }
     };
     get('saveAppearance').onclick = () => applyAppearance(appearanceValues());
-    get('defaultAppearance').onclick = () => applyAppearance({ fontSize:17, popupWidth:640, transparency:0 });
+    get('defaultAppearance').onclick = () => applyAppearance({ fontSize:17, popupWidth:640, transparency:0 }, 'default-status');
     preview();
     const save = () => {
       const values = Object.fromEntries(keys.map(key => [key, key === 'enabled' ? get(key).checked : get(key).value]));
       api.save(values);
     };
-    get('save').onclick = () => { try { save(); get('status').textContent = '已保存。请在 PDF 英文句子上悬停。'; } catch(e) { get('status').textContent = e.message; } };
+    get('save').onclick = () => { try { save(); notify('save-status', '设置已保存。'); } catch(e) { notify('save-status', e.message || '保存失败，请重试。'); } };
     get('test').onclick = async () => {
+      if (get('test').disabled) return;
+      const button = get('test'), feedback = get('test-status');
+      const label = button.textContent;
+      window.clearTimeout(feedbackTimers.get('test-status'));
+      feedbackTimers.delete('test-status');
       get('test').disabled = true;
+      button.textContent = '正在测试…';
+      feedback.textContent = '正在保存设置并连接翻译服务，请稍候…';
+      feedback.setAttribute('aria-busy', 'true');
       try {
-        save(); get('status').textContent = '正在测试…';
+        save();
         const result = await api.translate('The researchers found that sleep improves memory.', { force: true });
         const d = api.diagnostic();
         const mapped = result.segments.filter(s => s.source.includes(4)).map(s => s.text).join(' / ');
         await api.flushCache();
-        get('status').textContent = '连接成功：' + result.text + '\nsleep 对应：' + (mapped || '模型未提供映射') + '\n已连接 PDF 视图：' + d.connectedPDFViews + (api.diagnostic().cache.error ? '\n' + api.diagnostic().cache.error : '');
-      } catch (e) { get('status').textContent = e.message; } finally { get('test').disabled = false; }
+        notify('test-status', '连接成功：' + result.text + '\nsleep 对应：' + (mapped || '模型未提供映射') + '\n已连接 PDF 视图：' + d.connectedPDFViews + (api.diagnostic().cache.error ? '\n' + api.diagnostic().cache.error : ''));
+      } catch (e) {
+        notify('test-status', '测试失败：' + (e.message || '请求未完成，请检查服务配置。'));
+      } finally {
+        button.disabled = false; button.textContent = label; feedback.removeAttribute('aria-busy');
+      }
     };
     get('clear').onclick = async () => {
+      if (get('clear').disabled) return;
+      window.clearTimeout(feedbackTimers.get('clear-status'));
+      get('clear-status').textContent = '正在清空…';
       get('clear').disabled = true;
-      try { await api.reset(); get('status').textContent = '已清空本次运行已加载文章的缓存。其他文章的缓存文件保留。'; }
-      catch(e) { get('status').textContent = e.message; }
+      try { await api.reset(); notify('clear-status', '已清空已加载文章缓存。'); }
+      catch(e) { notify('clear-status', e.message || '清空失败，请重试。'); }
       finally { get('clear').disabled = false; }
     };
     const cacheStatus = api.diagnostic().cache;
-    get('status').textContent = cacheStatus.error || '缓存保存在各 PDF 所在目录，重启后可复用。Ctrl+Alt+R 可重新翻译当前弹窗的句子。';
+    if (cacheStatus.error) notify('clear-status', cacheStatus.error);
+    root.setAttribute('data-initialized', 'true');
   }
 };
+// Zotero dispatches load on the inserted pane fragment. Bind through capture
+// as well as the inline handler, with an idempotent init for repeated loads.
+document.addEventListener('load', event => {
+  if (event.target?.id === 'sh-preferences') window.SHPrefs.init();
+}, true);

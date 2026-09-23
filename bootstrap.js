@@ -8,7 +8,7 @@ async function startup({ rootURI }, reason) {
   Zotero.SentenceHover = shScope.SentenceHover;
   await Zotero.PreferencePanes.register({
     pluginID: 'sentence-hover@local', id: 'sentence-hover-prefs',
-    label: '句译随行', src: rootURI + 'prefs.xhtml', scripts: [rootURI + 'prefs.js']
+    label: '句译随行', src: rootURI + 'prefs.xhtml', scripts: [rootURI + 'prefs.js'], stylesheets: [rootURI + 'prefs.css']
   });
   shScope.SentenceHover.start();
 }

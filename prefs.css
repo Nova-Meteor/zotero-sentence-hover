@@ -1,0 +1,48 @@
+/* Native Zotero preference groups; scoped to avoid affecting other plugins. */
+#sh-preferences { color: var(--fill-primary, CanvasText); font: inherit; min-width: 0; }
+#sh-preferences groupbox { min-width: 0; }
+#sh-preferences h2 { font-size: 1.1em; margin-block: 6px 10px; }
+#sh-preferences .sh-form {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  column-gap: 14px;
+  row-gap: 8px;
+  margin-block: 6px;
+}
+#sh-preferences .sh-form > label { margin: 0; }
+#sh-preferences input, #sh-preferences button { font: inherit; }
+#sh-preferences input[type="text"],
+#sh-preferences input[type="url"],
+#sh-preferences input[type="password"] { box-sizing: border-box; width: 100%; min-width: 0; margin: 0; }
+#sh-preferences input[type="number"] { width: 90px; margin: 0; }
+#sh-preferences input[type="range"] { width: 170px; max-width: 100%; min-width: 60px; margin: 0; }
+#sh-preferences .sh-control { display: flex; align-items: center; gap: 8px; min-width: 0; }
+#sh-preferences .sh-slider-value { min-width: 6em; white-space: nowrap; font-variant-numeric: tabular-nums; }
+#sh-preferences .sh-check { display: flex; align-items: center; gap: 6px; margin-block: 3px 8px; }
+#sh-preferences .sh-check input { margin: 0; }
+#sh-preferences .sh-help { color: var(--fill-secondary, GrayText); font-size: .95em; line-height: 1.55; margin-block: 6px; overflow-wrap: anywhere; }
+#sh-preferences .sh-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-block: 8px 4px; }
+#sh-preferences .sh-actions button { margin: 0; white-space: nowrap; }
+#sh-preferences summary { cursor: pointer; margin-block: 8px; }
+#sh-preferences .sh-preview-stage {
+  min-width: 0; padding: 12px;
+  border: 1px solid var(--fill-quinary, #d0d0d0);
+  border-radius: 4px;
+  /* A white popup over a white theme surface hides alpha changes. Keep a
+     contrasting reference pattern under the entire preview in either theme. */
+  background-color: #d2d9e0;
+  background-image: conic-gradient(#a2aeba 25%, #e2e7ec 0 50%, #a2aeba 0 75%, #e2e7ec 0);
+  background-size: 24px 24px;
+  overflow: hidden;
+}
+#sh-preview { width: max-content; box-sizing: border-box; padding: 16px 18px; border: 1px solid #9bacb6; border-radius: 12px; color: #182a31; line-height: 1.9; overflow-wrap: anywhere; }
+#sh-preferences .sh-preview-highlight { background: #ffe28a; border-radius: 3px; }
+#sh-preferences .sh-action-status { font-size: .95em; line-height: 1.55; overflow-wrap: anywhere; }
+#sh-preferences .sh-action-status:empty { display: none; }
+#sh-preferences .sh-feedback { margin: 8px 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; }
+#sh-preferences .sh-feedback:empty { display: none; }
+@media (max-width: 560px) {
+  #sh-preferences .sh-form { column-gap: 8px; }
+  #sh-preferences input[type="range"] { width: 120px; }
+}
