@@ -156,11 +156,11 @@ var SentenceHover = (() => {
     const box = html('div'); box.id = 'sentence-hover-popup';
     box.style.cssText = 'position:fixed;z-index:2147483646;left:12px;top:12px;width:max-content;max-width:min(640px, calc(100vw - 24px));max-height:42vh;overflow:auto;box-sizing:border-box;padding:16px 18px;background:#fff;color:#182a31;border:1px solid #9bacb6;border-radius:12px;box-shadow:0 5px 28px #0003;font:15px/1.65 system-ui,sans-serif;display:none;user-select:text;';
     const close = html('button'); close.textContent = '×'; close.title = '关闭（Esc）';
-    close.style.cssText = 'position:absolute;right:10px;top:8px;border:0;background:transparent;color:inherit;font-size:22px;cursor:pointer;';
+    close.style.cssText = 'position:absolute;right:10px;top:6px;width:24px;height:24px;padding:0;line-height:24px;border:0;background:transparent;color:inherit;font-size:22px;cursor:pointer;';
     const refresh = html('button'); refresh.textContent = '↻'; refresh.title = '重新翻译';
     refresh.setAttribute('aria-label', '重新翻译当前句子');
-    refresh.style.cssText = 'position:absolute;right:35px;top:8px;border:0;background:transparent;color:inherit;font-size:20px;cursor:pointer;';
-    const translation = html('div'); translation.style.cssText = 'font-size:17px;line-height:1.9;padding-right:45px;white-space:normal;overflow-wrap:anywhere;';
+    refresh.style.cssText = 'position:absolute;right:10px;top:32px;width:24px;height:24px;padding:0;line-height:24px;border:0;background:transparent;color:inherit;font-size:20px;cursor:pointer;';
+    const translation = html('div'); translation.style.cssText = 'font-size:17px;line-height:1.9;min-height:28px;padding-right:24px;white-space:normal;overflow-wrap:anywhere;';
     box.append(close, refresh, translation); doc.body.appendChild(box);
     function applyAppearance() {
       const c = config();
