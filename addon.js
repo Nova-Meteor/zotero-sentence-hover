@@ -13,6 +13,7 @@ var SentenceHover = (() => {
     write: data => IOUtils.writeJSON(cachePath, data, { tmpPath: cachePath + '.tmp' })
   } : null });
   let timer, timerWindow, running = false, generation = 0;
+  let activeContext = null;
   const defaults = { enabled: true, baseURL: '', model: '', apiKey: '', delay: 500, hideDelay: 450, maxChars: 1800 };
   function config() {
     const c = {};
@@ -97,8 +98,9 @@ var SentenceHover = (() => {
     inflight.set(key, promise);
     return promise;
   }
-  function makeContext(win, app) {
+  function makeContext(win, app, hostWindow) {
     const doc = win.document, pages = new Map();
+    const contextToken = {};
     let current = null, result = null, hoverTimer = null, sequence = 0, lookup = 0, lastPoint = null, lastMove = 0, disposed = false;
     let pending = null, hideTimer = null, overPopup = false, busy = false;
     let pdfDocument = app.pdfDocument;
@@ -107,8 +109,11 @@ var SentenceHover = (() => {
     box.style.cssText = 'position:fixed;z-index:2147483646;left:12px;top:12px;width:max-content;max-width:min(640px, calc(100vw - 24px));max-height:42vh;overflow:auto;box-sizing:border-box;padding:16px 18px;background:#fff;color:#182a31;border:1px solid #9bacb6;border-radius:12px;box-shadow:0 5px 28px #0003;font:15px/1.65 system-ui,sans-serif;display:none;user-select:text;';
     const close = html('button'); close.textContent = '×'; close.title = '关闭（Esc）';
     close.style.cssText = 'position:absolute;right:10px;top:8px;border:0;background:transparent;color:inherit;font-size:22px;cursor:pointer;';
-    const translation = html('div'); translation.style.cssText = 'font-size:17px;line-height:1.9;padding-right:20px;white-space:normal;overflow-wrap:anywhere;';
-    box.append(close, translation); doc.body.appendChild(box);
+    const refresh = html('button'); refresh.textContent = '↻'; refresh.title = '重新翻译（Ctrl+Alt+R）';
+    refresh.setAttribute('aria-label', '重新翻译当前句子');
+    refresh.style.cssText = 'position:absolute;right:35px;top:8px;border:0;background:transparent;color:inherit;font-size:20px;cursor:pointer;';
+    const translation = html('div'); translation.style.cssText = 'font-size:17px;line-height:1.9;padding-right:45px;white-space:normal;overflow-wrap:anywhere;';
+    box.append(close, refresh, translation); doc.body.appendChild(box);
     box.title = 'Ctrl+Alt+R 重新翻译当前句子（macOS：⌘+Option+R）';
     function cancelHide() { win.clearTimeout(hideTimer); hideTimer = null; }
     function cancelPending() { win.clearTimeout(hoverTimer); hoverTimer = null; pending = null; }
@@ -148,6 +153,8 @@ var SentenceHover = (() => {
     function clear() {
       sequence++; lookup++; cancelPending(); cancelHide(); current = null; result = null; busy = false; overPopup = false;
       box.style.display = 'none'; lastPoint = null;
+      if (activeContext === contextToken) activeContext = null;
+      refresh.disabled = false; refresh.textContent = '↻'; box.removeAttribute('aria-busy');
     }
     function render() {
       if (!current || !result) return;
@@ -165,6 +172,8 @@ var SentenceHover = (() => {
       if (!current || disposed) return;
       const ticket = sequence, text = current.sentence.text;
       busy = true;
+      activeContext = contextToken;
+      refresh.disabled = true; refresh.textContent = '…'; refresh.title = force ? '正在重新翻译…' : '正在翻译…';
       box.style.display = 'block';
       // Retain the existing translation while explicitly refreshing it.
       if (!force || !result) translation.textContent = '正在翻译整句…';
@@ -174,13 +183,15 @@ var SentenceHover = (() => {
         const translated = await translate(text, { force });
         if (disposed || ticket !== sequence || !current) return;
         result = translated; render();
+        refresh.title = force ? '已重新翻译；点击可再次重译' : '重新翻译（Ctrl+Alt+R）';
       } catch (e) {
         if (disposed || ticket !== sequence) return;
         if (force && result) { render(); translation.appendChild(doc.createTextNode('（重译失败，可再次按快捷键）')); }
         else translation.textContent = e.message;
+        refresh.title = '翻译失败，点击重试';
         position();
       } finally {
-        if (ticket === sequence) { busy = false; box.removeAttribute('aria-busy'); }
+        if (ticket === sequence) { busy = false; refresh.disabled = false; refresh.textContent = '↻'; box.removeAttribute('aria-busy'); }
       }
     }
     async function locate(x, y) {
@@ -250,6 +261,7 @@ var SentenceHover = (() => {
           cancelPending(); scheduleHide();
           return;
         }
+        activeContext = contextToken;
         cancelHide();
         if (sameSentence(current, hit)) {
           cancelPending();
@@ -272,16 +284,23 @@ var SentenceHover = (() => {
       const selected = win.getSelection();
       if (!selected.isCollapsed && !box.contains(selected.anchorNode)) clear();
     }
-    function key(event) {
-      if (event.key === 'Escape') { clear(); return; }
-      if (event.defaultPrevented || event.repeat || event.shiftKey || !event.altKey || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'r') return;
-      if (event.target?.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+    function retranslate() {
       if (!config().enabled || !current || box.style.display === 'none') return;
-      event.preventDefault(); event.stopPropagation();
       if (busy) return;
       cancelPending(); sequence++; show(true);
     }
-    function enterPopup() { overPopup = true; lookup++; cancelHide(); cancelPending(); }
+    function key(event) {
+      if (activeContext !== contextToken || doc.hidden || disposed) return;
+      if (event.key === 'Escape') { clear(); return; }
+      if (event.defaultPrevented || event.repeat || event.shiftKey || !event.altKey || !(event.ctrlKey || event.metaKey)) return;
+      if (event.code !== 'KeyR' && String(event.key).toLowerCase() !== 'r') return;
+      const target = event.target;
+      if (target?.isContentEditable || target?.closest?.('input, textarea, select, textbox, [contenteditable]:not([contenteditable="false"])')) return;
+      if (!config().enabled || !current || box.style.display === 'none') return;
+      event.preventDefault(); event.stopPropagation();
+      retranslate();
+    }
+    function enterPopup() { activeContext = contextToken; overPopup = true; lookup++; cancelHide(); cancelPending(); }
     function exitPopup() { overPopup = false; scheduleHide(); }
     function leave(event) {
       if (box.contains(event.relatedTarget)) { enterPopup(); return; }
@@ -289,11 +308,27 @@ var SentenceHover = (() => {
     }
     function scroll(event) { if (!box.contains(event.target)) clear(); }
     close.addEventListener('click', clear);
+    refresh.addEventListener('click', retranslate);
     box.addEventListener('mouseenter', enterPopup);
     box.addEventListener('mouseleave', exitPopup);
     doc.addEventListener('mousemove', move, true);
     doc.addEventListener('selectionchange', selection);
-    doc.addEventListener('keydown', key, true);
+    // Hover does not focus the PDF iframe. Listen along its containing-window
+    // chain as well, and route to only the most recently hovered visible popup.
+    const keyWindows = new Set();
+    let keyWindow = win;
+    for (let i = 0; keyWindow && i < 8; i++) {
+      try {
+        if (keyWindows.has(keyWindow)) break;
+        keyWindow.addEventListener('keydown', key, true);
+        keyWindows.add(keyWindow);
+        if (keyWindow.parent === keyWindow) break;
+        keyWindow = keyWindow.parent;
+      } catch (_) { break; }
+    }
+    if (hostWindow && !keyWindows.has(hostWindow)) {
+      hostWindow.addEventListener('keydown', key, true); keyWindows.add(hostWindow);
+    }
     doc.addEventListener('mouseleave', leave);
     doc.addEventListener('scroll', scroll, true);
     win.addEventListener('resize', clear);
@@ -301,7 +336,8 @@ var SentenceHover = (() => {
     return { clear, doc, destroy() {
       disposed = true; clear(); pages.clear(); box.remove();
       doc.removeEventListener('mousemove', move, true); doc.removeEventListener('selectionchange', selection);
-      doc.removeEventListener('keydown', key, true); doc.removeEventListener('mouseleave', leave);
+      for (const w of keyWindows) w.removeEventListener('keydown', key, true);
+      doc.removeEventListener('mouseleave', leave);
       doc.removeEventListener('scroll', scroll, true); win.removeEventListener('resize', clear);
       win.removeEventListener('blur', clear);
     } };
@@ -309,7 +345,7 @@ var SentenceHover = (() => {
   function scan() {
     if (!running) return;
     const found = new Set();
-    function walk(win, depth = 0) {
+    function walk(win, depth = 0, hostWindow = null) {
       if (!win || depth > 5) return;
       try {
         const native = win.wrappedJSObject || win;
@@ -317,12 +353,12 @@ var SentenceHover = (() => {
         if (app?.pdfDocument && win.document.body) {
           found.add(win);
           if (contexts.has(win) && contexts.get(win).doc !== win.document) { contexts.get(win).destroy(); contexts.delete(win); }
-          if (!contexts.has(win)) contexts.set(win, makeContext(win, app));
+          if (!contexts.has(win)) contexts.set(win, makeContext(win, app, hostWindow));
         }
-        for (const iframe of win.document.querySelectorAll('iframe')) walk(iframe.contentWindow, depth + 1);
+        for (const iframe of win.document.querySelectorAll('iframe')) walk(iframe.contentWindow, depth + 1, hostWindow);
       } catch (_) {}
     }
-    for (const reader of Zotero.Reader._readers || []) walk(reader._iframeWindow);
+    for (const reader of Zotero.Reader._readers || []) walk(reader._iframeWindow, 0, reader._window);
     for (const [win, ctx] of contexts) if (!found.has(win)) { ctx.destroy(); contexts.delete(win); }
   }
   function start() { running = true; timerWindow = Zotero.getMainWindow(); scan(); timer = timerWindow.setInterval(scan, 1500); }

@@ -8,6 +8,7 @@ const wait=ms=>new Promise(r=>setTimeout(r,ms));
 function fixture(request, pageTop = 0, geometry = 'normal', pageLeft = 0) {
   const dom=new JSDOM('<body><div class="page" data-page-number="1"></div></body>',{pretendToBeVisual:true});
   const win=dom.window,doc=win.document,page=doc.querySelector('.page');
+  const host=new JSDOM('<body></body>',{pretendToBeVisual:true}).window;
   for (const [key,value] of Object.entries({offsetWidth:600,offsetHeight:800,clientWidth:600,clientHeight:800,clientLeft:0,clientTop:0})) Object.defineProperty(page,key,{value});
   page.getBoundingClientRect=()=>({left:pageLeft,top:pageTop,width:600,height:800});
   doc.elementFromPoint=(x,y)=>x<pageLeft+500&&y<pageTop+100?page:doc.body;
@@ -26,13 +27,37 @@ function fixture(request, pageTop = 0, geometry = 'normal', pageLeft = 0) {
   };
   win.PDFViewerApplication={pdfDocument:{getPageData:async()=>({chars})},pdfViewer:{getPageView:()=>({viewport})}};
   const prefs=new Map(Object.entries({baseURL:'https://example.com/v1',model:'test',delay:200,hideDelay:180,enabled:true}).map(([k,v])=>['extensions.sentenceHover.'+k,v]));
-  const scope={URL,Zotero:{Prefs:{get:k=>prefs.get(k),set:(k,v)=>prefs.set(k,v)},HTTP:{request},getMainWindow:()=>win,Reader:{_readers:[{_iframeWindow:win}]}},Services:{},Components:{utils:{cloneInto:x=>x}}};
+  const scope={URL,Zotero:{Prefs:{get:k=>prefs.get(k),set:(k,v)=>prefs.set(k,v)},HTTP:{request},getMainWindow:()=>win,Reader:{_readers:[{_iframeWindow:win,_window:host}]}},Services:{},Components:{utils:{cloneInto:x=>x}}};
   vm.createContext(scope);
   for(const file of ['core.js','cache.js','addon.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),scope);
   const api=scope.SentenceHover;api.start();
   doc.getElementById('sentence-hover-popup').getBoundingClientRect=()=>({width:480,height:120});
-  return {api,win,doc,move:(x)=>page.dispatchEvent(new win.MouseEvent('mousemove',{bubbles:true,clientX:pageLeft+x,clientY:pageTop+16})),close:()=>{api.stop();win.close();}};
+  return {api,win,host,doc,move:(x)=>page.dispatchEvent(new win.MouseEvent('mousemove',{bubbles:true,clientX:pageLeft+x,clientY:pageTop+16})),close:()=>{api.stop();win.close();host.close();}};
 }
+test('shortcut in host window reaches hovered PDF with physical KeyR and shows progress',async()=>{
+  let calls=0,finish;const f=fixture(async()=>{calls++;if(calls===2)await new Promise(r=>finish=r);return answer;});
+  try{
+    f.move(12);await wait(280);
+    const press=()=>f.host.document.dispatchEvent(new f.host.KeyboardEvent('keydown',{key:'®',code:'KeyR',ctrlKey:true,altKey:true,cancelable:true}));
+    press();await wait(40);assert.equal(calls,2);
+    const button=f.doc.querySelector('[aria-label="重新翻译当前句子"]');assert.equal(button.textContent,'…');assert.equal(button.disabled,true);
+    finish();await wait(50);assert.equal(button.textContent,'↻');
+    f.api.stop();press();await wait(40);assert.equal(calls,2);
+  }finally{f.close();}
+});
+test('refresh button bypasses cache without keyboard focus',async()=>{
+  let calls=0;const f=fixture(async()=>{calls++;return answer;});
+  try{
+    f.move(12);await wait(280);f.doc.querySelector('[aria-label="重新翻译当前句子"]').click();await wait(60);assert.equal(calls,2);
+  }finally{f.close();}
+});
+test('host editable field does not trigger PDF retranslation',async()=>{
+  let calls=0;const f=fixture(async()=>{calls++;return answer;});
+  try{
+    f.move(12);await wait(280);const input=f.host.document.createElement('input');f.host.document.body.append(input);
+    input.dispatchEvent(new f.host.KeyboardEvent('keydown',{key:'r',code:'KeyR',ctrlKey:true,altKey:true,bubbles:true}));await wait(50);assert.equal(calls,1);
+  }finally{f.close();}
+});
 test('leaving delays close; entering popup keeps it visible until leaving again',async()=>{
   const f=fixture(async()=>answer);
   try{
