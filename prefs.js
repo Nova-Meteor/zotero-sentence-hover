@@ -5,15 +5,26 @@ window.SHPrefs = {
     const api = Zotero.SentenceHover;
     const get = name => document.getElementById('sh-' + name);
     const feedbackTimers = new Map();
+    let disposed = false;
+    const updateUI = action => {
+      if (disposed) return;
+      try {
+        if (!root.isConnected || window.closed) return;
+        action();
+      } catch (_) { /* Preferences can close or reload while a request completes. */ }
+    };
     const notify = (name, message) => {
-      window.clearTimeout(feedbackTimers.get(name));
-      const node = get(name);
-      node.textContent = message;
-      feedbackTimers.set(name, window.setTimeout(() => {
-        node.textContent = ''; feedbackTimers.delete(name);
-      }, 2000));
+      updateUI(() => {
+        window.clearTimeout(feedbackTimers.get(name));
+        const node = get(name);
+        node.textContent = message;
+        feedbackTimers.set(name, window.setTimeout(() => {
+          updateUI(() => { node.textContent = ''; }); feedbackTimers.delete(name);
+        }, 2000));
+      });
     };
     window.addEventListener('unload', () => {
+      disposed = true;
       for (const timer of feedbackTimers.values()) window.clearTimeout(timer);
       feedbackTimers.clear();
     }, { once: true });
@@ -68,14 +79,19 @@ window.SHPrefs = {
       try {
         save();
         const result = await api.translate('The researchers found that sleep improves memory.', { force: true });
-        const d = api.diagnostic();
         const mapped = result.segments.filter(s => s.source.includes(4)).map(s => s.text).join(' / ');
-        await api.flushCache();
-        notify('test-status', '连接成功：' + result.text + '\nsleep 对应：' + (mapped || '模型未提供映射') + '\n已连接 PDF 视图：' + d.connectedPDFViews + (api.diagnostic().cache.error ? '\n' + api.diagnostic().cache.error : ''));
+        // The sample uses memory only. Reader diagnostics and other articles'
+        // cache writes are not part of testing the translation service.
+        let details = '';
+        try {
+          const d = api.diagnostic();
+          details = '\n已连接 PDF 视图：' + d.connectedPDFViews + (d.cache.error ? '\n' + d.cache.error : '');
+        } catch (_) { /* Optional diagnostics must not turn success into failure. */ }
+        notify('test-status', '连接成功：' + result.text + '\nsleep 对应：' + (mapped || '模型未提供映射') + details);
       } catch (e) {
         notify('test-status', '测试失败：' + (e.message || '请求未完成，请检查服务配置。'));
       } finally {
-        button.disabled = false; button.textContent = label; feedback.removeAttribute('aria-busy');
+        updateUI(() => { button.disabled = false; button.textContent = label; feedback.removeAttribute('aria-busy'); });
       }
     };
     get('clear').onclick = async () => {
@@ -85,10 +101,12 @@ window.SHPrefs = {
       get('clear').disabled = true;
       try { await api.reset(); notify('clear-status', '已清空已加载文章缓存。'); }
       catch(e) { notify('clear-status', e.message || '清空失败，请重试。'); }
-      finally { get('clear').disabled = false; }
+      finally { updateUI(() => { get('clear').disabled = false; }); }
     };
-    const cacheStatus = api.diagnostic().cache;
-    if (cacheStatus.error) notify('clear-status', cacheStatus.error);
+    try {
+      const cacheStatus = api.diagnostic().cache;
+      if (cacheStatus.error) notify('clear-status', cacheStatus.error);
+    } catch (_) { /* Opening preferences must not depend on reader diagnostics. */ }
     root.setAttribute('data-initialized', 'true');
   }
 };

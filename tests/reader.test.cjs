@@ -38,6 +38,37 @@ function fixture(request, pageTop = 0, geometry = 'normal', pageLeft = 0, multil
   doc.getElementById('sentence-hover-popup').getBoundingClientRect=()=>({width:480,height:120});
   return {api,win,host,doc,move:(x,y=16)=>page.dispatchEvent(new win.MouseEvent('mousemove',{bubbles:true,clientX:pageLeft+x,clientY:pageTop+y})),close:()=>{api.stop();win.close();host.close();}};
 }
+test('saving after a dead reader object still permits test translation and removes host listeners',async()=>{
+  let calls=0;const f=fixture(async()=>{calls++;return answer;});
+  try{
+    f.move(12);await wait(280);
+    const overlay=f.doc.getElementById('sentence-hover-word-highlight');
+    const box=f.doc.getElementById('sentence-hover-popup');
+    overlay.replaceChildren=()=>{throw new Error("can't access dead object");};
+    box.remove=()=>{throw new Error("can't access dead object");};
+    assert.doesNotThrow(()=>f.api.save({...f.api.config(),model:'changed'}));
+    assert.equal(f.api.diagnostic().connectedPDFViews,0);
+    assert.equal((await f.api.translate('Sleep improves memory.',{force:true})).text,'睡眠改善记忆。');
+    assert.equal(calls,2);
+    f.host.document.dispatchEvent(new f.host.KeyboardEvent('keydown',{key:'r',ctrlKey:true,altKey:true}));
+    await wait(40);assert.equal(calls,2);
+  }finally{f.close();}
+});
+test('reader unload invalidates pending response before cleanup can fail',async()=>{
+  let finish;const f=fixture(async()=>{await new Promise(r=>finish=r);return answer;});
+  try{
+    f.move(12);await wait(270);
+    const box=f.doc.getElementById('sentence-hover-popup');
+    let writes=0;
+    box.remove=()=>{throw new Error("can't access dead object");};
+    const label=box.lastChild;
+    Object.defineProperty(label,'textContent',{set(){writes++;throw new Error("can't access dead object");}});
+    f.win.dispatchEvent(new f.win.Event('unload'));
+    assert.equal(f.api.diagnostic().connectedPDFViews,0);
+    finish();await wait(50);assert.equal(writes,0);
+    assert.doesNotThrow(()=>f.api.saveAppearance({fontSize:22}));
+  }finally{f.close();}
+});
 test('crossing line gap within same sentence retains popup and updates next-line highlight',async()=>{
   let calls=0;const f=fixture(async()=>{calls++;return answer;},0,'normal',0,true);
   try{

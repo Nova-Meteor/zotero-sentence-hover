@@ -64,6 +64,29 @@ test('test translation shows loading and success directly under service button',
     assert.equal(f.get('test-status').closest('groupbox'),f.get('test').closest('groupbox'));
   }finally{f.dom.window.close();}
 });
+test('optional dead diagnostics cannot change a successful translation into a test failure',async()=>{
+  const f=servicePane();let flushes=0;
+  try{
+    f.api.diagnostic=()=>{throw new Error("can't access dead object");};
+    f.api.flushCache=async()=>{flushes++;throw new Error("can't access dead object");};
+    const request=f.get('test').onclick();
+    f.finish();await request;
+    assert.match(f.get('test-status').textContent,/连接成功：睡眠改善记忆/);
+    assert.doesNotMatch(f.get('test-status').textContent,/测试失败|dead object/);
+    assert.equal(f.get('test').disabled,false);assert.equal(flushes,0);
+  }finally{f.dom.window.close();}
+});
+test('closing preferences during a test does not access destroyed controls on completion',async()=>{
+  const f=servicePane();let writes=0;
+  try{
+    const request=f.get('test').onclick();
+    f.dom.window.dispatchEvent(new f.dom.window.Event('unload'));
+    for(const key of ['test','test-status']){
+      Object.defineProperty(f.get(key),'textContent',{set(){writes++;throw new Error("can't access dead object");}});
+    }
+    f.finish();await request;assert.equal(writes,0);
+  }finally{f.dom.window.close();}
+});
 test('configuration errors appear in service section without sending API request',()=>{
   const f=servicePane('请填写模型名称。');
   try{f.get('test').click();assert.match(f.get('test-status').textContent,/测试失败：请填写模型名称/);assert.equal(f.calls(),0);assert.equal(f.get('test').disabled,false);}finally{f.dom.window.close();}

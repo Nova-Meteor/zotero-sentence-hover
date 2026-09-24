@@ -1,7 +1,7 @@
 var shScope;
 async function startup({ rootURI }, reason) {
   await Zotero.uiReadyPromise;
-  shScope = { Zotero, Services, Components, IOUtils, PathUtils, URL: Zotero.getMainWindow().URL };
+  shScope = { Zotero, Services, Components, IOUtils, PathUtils, URL };
   Services.scriptloader.loadSubScript(rootURI + 'core.js', shScope, 'UTF-8');
   Services.scriptloader.loadSubScript(rootURI + 'cache.js', shScope, 'UTF-8');
   Services.scriptloader.loadSubScript(rootURI + 'addon.js', shScope, 'UTF-8');

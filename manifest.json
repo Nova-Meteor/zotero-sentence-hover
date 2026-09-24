@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "句译随行 Sentence Hover",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "悬停翻译 PDF 英文整句，并联动高亮中文对应词语。",
   "author": "Sentence Hover contributors",
   "homepage_url": "https://github.com/Nova-Meteor/zotero-sentence-hover",

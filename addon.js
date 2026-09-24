@@ -41,6 +41,21 @@ var SentenceHover = (() => {
   }
   let timer, timerWindow, running = false, generation = 0;
   let activeContext = null;
+  function dropContext(win, ctx) {
+    contexts.delete(win);
+    try { ctx.destroy(); } catch (_) { /* The reader compartment may already be gone. */ }
+  }
+  function visitContexts(action) {
+    for (const [win, ctx] of contexts) {
+      try {
+        if (!ctx.isAlive()) { dropContext(win, ctx); continue; }
+        action(ctx);
+      } catch (_) {
+        // A closed PDF must never abort a settings save or another reader.
+        dropContext(win, ctx);
+      }
+    }
+  }
   const appearanceRanges = { fontSize: [12, 32, 17], popupWidth: [240, 1200, 640], transparency: [0, 80, 0] };
   const defaults = { enabled: true, highlightSourceWord: true, baseURL: '', model: '', apiKey: '', delay: 500, maxChars: 1800, fontSize: 17, popupWidth: 640, transparency: 0 };
   function normalizeAppearance(values) {
@@ -57,12 +72,12 @@ var SentenceHover = (() => {
   function saveAppearance(values) {
     const appearance = normalizeAppearance({ ...config(), ...values });
     for (const [key,value] of Object.entries(appearance)) Zotero.Prefs.set(PREFIX + key, value, true);
-    for (const ctx of contexts.values()) ctx.applyAppearance();
+    visitContexts(ctx => ctx.applyAppearance());
     return appearance;
   }
   function setSourceHighlight(enabled) {
     Zotero.Prefs.set(PREFIX + 'highlightSourceWord', !!enabled, true);
-    for (const ctx of contexts.values()) ctx.refreshHighlight();
+    visitContexts(ctx => ctx.refreshHighlight());
   }
   function save(values) {
     const baseURL = String(values.baseURL || '').trim();
@@ -83,7 +98,7 @@ var SentenceHover = (() => {
     generation++;
     for (const xhr of requests) { try { xhr.abort(); } catch (_) {} }
     requests.clear(); inflight.clear();
-    for (const ctx of contexts.values()) ctx.clear();
+    visitContexts(ctx => ctx.clear());
   }
   async function reset() {
     cancelRequests();
@@ -155,6 +170,11 @@ var SentenceHover = (() => {
     const contextToken = {};
     let current = null, result = null, hoverTimer = null, sequence = 0, lookup = 0, lastPoint = null, lastMove = 0, disposed = false;
     let pending = null, overPopup = false, busy = false, hideTimer = null;
+    const keyWindows = new Set();
+    function isAlive() {
+      try { return !disposed && !win.closed && win.document === doc && doc.documentElement.isConnected; }
+      catch (_) { return false; }
+    }
     let pdfDocument = app.pdfDocument;
     const html = name => doc.createElementNS('http://www.w3.org/1999/xhtml', name);
     const wordOverlay = html('div'); wordOverlay.id = 'sentence-hover-word-highlight';
@@ -246,7 +266,7 @@ var SentenceHover = (() => {
       position();
     }
     async function show(force = false) {
-      if (!current || disposed) return;
+      if (!current || !isAlive()) return;
       const ticket = sequence, text = current.sentence.text;
       busy = true;
       activeContext = contextToken;
@@ -258,17 +278,17 @@ var SentenceHover = (() => {
       position();
       try {
         const translated = await translate(text, { force, reader });
-        if (disposed || ticket !== sequence || !current) return;
+        if (!isAlive() || ticket !== sequence || !current) return;
         result = translated; render();
         refresh.title = force ? '已重新翻译；点击可再次重译' : '重新翻译';
       } catch (e) {
-        if (disposed || ticket !== sequence) return;
+        if (!isAlive() || ticket !== sequence) return;
         if (force && result) { render(); translation.appendChild(doc.createTextNode('（重译失败，可再次按快捷键）')); }
         else translation.textContent = e.message;
         refresh.title = '翻译失败，点击重试';
         position();
       } finally {
-        if (ticket === sequence) { busy = false; refresh.disabled = false; refresh.textContent = '↻'; box.removeAttribute('aria-busy'); }
+        if (isAlive() && ticket === sequence) { busy = false; refresh.disabled = false; refresh.textContent = '↻'; box.removeAttribute('aria-busy'); }
       }
     }
     async function locate(x, y) {
@@ -341,7 +361,7 @@ var SentenceHover = (() => {
       const id = ++lookup;
       try {
         const hit = await locate(point.x, point.y);
-        if (disposed || id !== lookup || lastPoint !== point) return;
+        if (!isAlive() || id !== lookup || lastPoint !== point) return;
         if (!hit) {
           cancelPending(); scheduleHide();
           return;
@@ -402,7 +422,6 @@ var SentenceHover = (() => {
     doc.addEventListener('selectionchange', selection);
     // Hover does not focus the PDF iframe. Listen along its containing-window
     // chain as well, and route to only the most recently hovered visible popup.
-    const keyWindows = new Set();
     let keyWindow = win;
     for (let i = 0; keyWindow && i < 8; i++) {
       try {
@@ -420,14 +439,30 @@ var SentenceHover = (() => {
     doc.addEventListener('scroll', scroll, true);
     win.addEventListener('resize', clear);
     win.addEventListener('blur', clear);
-    return { clear, doc, applyAppearance, refreshHighlight: () => highlightWord(current || pending), destroy() {
-      disposed = true; clear(); pages.clear(); box.remove(); wordOverlay.remove();
-      doc.removeEventListener('mousemove', move, true); doc.removeEventListener('selectionchange', selection);
-      for (const w of keyWindows) w.removeEventListener('keydown', key, true);
-      doc.removeEventListener('mouseleave', leave);
-      doc.removeEventListener('scroll', scroll, true); win.removeEventListener('resize', clear);
-      win.removeEventListener('blur', clear);
-    } };
+    function destroy() {
+      if (disposed) return;
+      // Invalidate asynchronous work before touching any window-owned objects.
+      disposed = true; sequence++; lookup++; current = null; pending = null; result = null; pages.clear();
+      if (activeContext === contextToken) activeContext = null;
+      const cleanup = [
+        () => win.clearTimeout(hoverTimer), () => win.clearTimeout(hideTimer),
+        () => box.remove(), () => wordOverlay.remove(),
+        () => doc.removeEventListener('mousemove', move, true),
+        () => doc.removeEventListener('selectionchange', selection),
+        () => doc.removeEventListener('mouseleave', leave),
+        () => doc.removeEventListener('scroll', scroll, true),
+        () => win.removeEventListener('resize', clear),
+        () => win.removeEventListener('blur', clear),
+        () => win.removeEventListener('unload', unload)
+      ];
+      for (const w of keyWindows) cleanup.push(() => w.removeEventListener('keydown', key, true));
+      // A dead inner frame must not prevent removal of listeners on its live host.
+      for (const release of cleanup) { try { release(); } catch (_) {} }
+      keyWindows.clear();
+    }
+    function unload() { contexts.delete(win); destroy(); }
+    win.addEventListener('unload', unload, { once: true });
+    return { clear, doc, isAlive, applyAppearance, refreshHighlight: () => highlightWord(current || pending), destroy };
   }
   function scan() {
     if (!running) return;
@@ -439,19 +474,21 @@ var SentenceHover = (() => {
         const app = native.PDFViewerApplication;
         if (app?.pdfDocument && win.document.body) {
           found.add(win);
-          if (contexts.has(win) && contexts.get(win).doc !== win.document) { contexts.get(win).destroy(); contexts.delete(win); }
+          if (contexts.has(win) && !contexts.get(win).isAlive()) dropContext(win, contexts.get(win));
           if (!contexts.has(win)) contexts.set(win, makeContext(win, app, hostWindow, reader));
         }
         for (const iframe of win.document.querySelectorAll('iframe')) walk(iframe.contentWindow, depth + 1, hostWindow, reader);
       } catch (_) {}
     }
     for (const reader of Zotero.Reader._readers || []) walk(reader._iframeWindow, 0, reader._window, reader);
-    for (const [win, ctx] of contexts) if (!found.has(win)) { ctx.destroy(); contexts.delete(win); }
+    for (const [win, ctx] of contexts) if (!found.has(win)) dropContext(win, ctx);
   }
   function start() { running = true; timerWindow = Zotero.getMainWindow(); scan(); timer = timerWindow.setInterval(scan, 1500); }
   async function stop() {
-    running = false; timerWindow?.clearInterval(timer); cancelRequests();
-    for (const ctx of contexts.values()) ctx.destroy(); contexts.clear();
+    running = false;
+    try { timerWindow?.clearInterval(timer); } catch (_) {}
+    cancelRequests();
+    for (const [win, ctx] of contexts) dropContext(win, ctx);
     await flushCaches();
   }
   return { start, stop, config, save, saveAppearance, setSourceHighlight, normalizeAppearance, translate, reset, flushCache: flushCaches, diagnostic: () => ({ readers: (Zotero.Reader._readers || []).length, connectedPDFViews: contexts.size, cachedSentences: cacheStatus().count, cache: cacheStatus() }) };
