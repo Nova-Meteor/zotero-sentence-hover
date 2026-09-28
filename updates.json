@@ -1,0 +1,19 @@
+{
+  "addons": {
+    "sentence-hover@local": {
+      "updates": [
+        {
+          "version": "1.1.2",
+          "update_link": "https://github.com/Nova-Meteor/zotero-sentence-hover/releases/download/v1.1.2/sentence-hover-1.1.2.xpi",
+          "update_hash": "sha256:dab4d132ecfb05eab39d78caaf62e3764ec8faa088569494c639aeffb6f6bc48",
+          "applications": {
+            "zotero": {
+              "strict_min_version": "10.0",
+              "strict_max_version": "10.*"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

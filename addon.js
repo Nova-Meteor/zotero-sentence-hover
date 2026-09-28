@@ -4,6 +4,42 @@ var SentenceHover = (() => {
   const PREFIX = 'extensions.sentenceHover.';
   const contexts = new Map(), inflight = new Map(), requests = new Set();
   const articleCaches = new Map(), memoryReaders = new WeakMap();
+  const fullDocuments = new Map();
+  let activeFullJob = null;
+  let nextContextID = 0;
+  function shortHash(value) {
+    let n=2166136261;
+    for(let i=0;i<value.length;i++) n=Math.imul(n^value.charCodeAt(i),16777619);
+    return (n>>>0).toString(16);
+  }
+  async function fullDocumentFor(reader, store, c = config()) {
+    if (!reader) return null;
+    const serviceKey = store.cache.key(SHCore.endpoint(c.baseURL), c.model, '');
+    const item = reader._item || Zotero.Items?.get(reader.itemID);
+    const id = String(item?.key || item?.id || reader.itemID || store.id);
+    const registryKey = JSON.stringify([store.id,id,serviceKey]);
+    if (!fullDocuments.has(registryKey)) {
+      const prefix = store.path ? PathUtils.join(PathUtils.parent(store.path),'sentence-hover-fulltext-'+shortHash(id)+'-'+shortHash(serviceKey)) : null;
+      const entry = { prefix, reader, archive:null };
+      entry.archive = SHFullText.create({
+        id, serviceKey, title: item?.getField?.('title') || 'PDF 全文翻译',
+        storage: prefix ? {
+          async read() {
+            if (!(await IOUtils.exists(prefix+'.json'))) return null;
+            if ((await IOUtils.stat(prefix+'.json')).size > 100000000) throw new Error('Full-text archive too large');
+            return IOUtils.readJSON(prefix+'.json');
+          },
+          write: data => IOUtils.writeJSON(prefix+'.json',data,{tmpPath:prefix+'.json.tmp'})
+        } : null,
+        translate: (text,signal) => translate(text,{reader:entry.reader,signal,skipFull:true})
+      });
+      fullDocuments.set(registryKey,entry);
+    }
+    const entry=fullDocuments.get(registryKey);
+    entry.reader=reader;
+    await entry.archive.ready;
+    return entry;
+  }
   let nextMemoryReader = 0;
   async function cacheFor(reader) {
     let cachePath = null, warning = '';
@@ -31,6 +67,7 @@ var SentenceHover = (() => {
     return articleCaches.get(id);
   }
   async function flushCaches() { await Promise.all([...articleCaches.values()].map(s => s.cache.flush())); }
+  async function flushFullDocuments() { await Promise.allSettled([...fullDocuments.values()].map(d=>d.archive.settle())); }
   function cacheStatus() {
     const stores = [...articleCaches.values()];
     return {
@@ -57,7 +94,11 @@ var SentenceHover = (() => {
     }
   }
   const appearanceRanges = { fontSize: [12, 32, 17], popupWidth: [240, 1200, 640], transparency: [0, 80, 0] };
-  const defaults = { enabled: true, highlightSourceWord: true, baseURL: '', model: '', apiKey: '', delay: 500, maxChars: 1800, fontSize: 17, popupWidth: 640, transparency: 0 };
+  const defaults = { enabled: true, highlightSourceWord: true, baseURL: '', model: '', apiKey: '', delay: 500, fullConcurrency: 3, maxChars: 1800, fontSize: 17, popupWidth: 640, transparency: 0 };
+  function normalizeConcurrency(value) {
+    const n=Number(value);
+    return Number.isFinite(n)?Math.max(1,Math.min(6,Math.floor(n))):3;
+  }
   function normalizeAppearance(values) {
     return Object.fromEntries(Object.entries(appearanceRanges).map(([key, [min, max, fallback]]) => {
       const n = values[key] === '' || values[key] == null ? fallback : Number(values[key]);
@@ -67,7 +108,7 @@ var SentenceHover = (() => {
   function config() {
     const c = {};
     for (const [key, fallback] of Object.entries(defaults)) c[key] = Zotero.Prefs.get(PREFIX + key, true) ?? fallback;
-    return { ...c, ...normalizeAppearance(c) };
+    return { ...c, ...normalizeAppearance(c), fullConcurrency: normalizeConcurrency(c.fullConcurrency) };
   }
   function saveAppearance(values) {
     const appearance = normalizeAppearance({ ...config(), ...values });
@@ -88,6 +129,7 @@ var SentenceHover = (() => {
       if (key in appearanceRanges) continue;
       let value = values[key];
       if (key === 'delay') value = Math.max(200, Math.min(3000, Number(value) || 500));
+      if (key === 'fullConcurrency') value = normalizeConcurrency(value);
       if (typeof value === 'string') value = value.trim();
       Zotero.Prefs.set(PREFIX + key, value, true);
     }
@@ -95,6 +137,7 @@ var SentenceHover = (() => {
     saveAppearance(values);
   }
   function cancelRequests() {
+    activeFullJob?.archive.cancel('设置已更改或缓存已清空');
     generation++;
     for (const xhr of requests) { try { xhr.abort(); } catch (_) {} }
     requests.clear(); inflight.clear();
@@ -102,11 +145,12 @@ var SentenceHover = (() => {
   }
   async function reset() {
     cancelRequests();
+    await Promise.all([...fullDocuments.values()].map(d=>d.archive.clear()));
     const results = await Promise.allSettled([...articleCaches.values()].map(s => s.cache.clear()));
     const failed = results.find(r => r.status === 'rejected');
     if (failed) throw failed.reason;
   }
-  async function translate(text, { force = false, reader = null } = {}) {
+  async function translate(text, { force = false, reader = null, signal = null, skipFull = false } = {}) {
     const epoch = generation;
     const store = await cacheFor(reader), cache = store.cache;
     await cache.ready;
@@ -117,21 +161,35 @@ var SentenceHover = (() => {
     const tokens = SHCore.words(text);
     if (!tokens.length) throw new Error('未识别到英文单词。');
     const key = cache.key(SHCore.endpoint(c.baseURL), c.model, text);
+    const full = !skipFull && reader ? await fullDocumentFor(reader,store,c) : null;
+    if (!force && full?.archive.get(text)) return full.archive.get(text);
+    if (epoch !== generation || signal?.cancelled) throw new Error('请求已取消。');
     const requestKey = JSON.stringify([store.id, key]);
     const cached = force ? null : cache.get(key);
     if (cached) return cached;
     if (inflight.has(requestKey)) return inflight.get(requestKey);
-    if (inflight.size >= 2) throw new Error('正在处理其他句子，请稍后再悬停。');
+    // Keep one extra slot available to foreground hover while a full job runs.
+    const requestLimit=signal?c.fullConcurrency:activeFullJob?c.fullConcurrency+1:2;
+    while (inflight.size >= requestLimit) {
+      if (!signal) throw new Error('正在处理其他句子，请稍后再悬停。');
+      await Promise.race([...inflight.values()].map(p=>p.catch(()=>null)).concat(signal.promise));
+      if (signal.cancelled || epoch !== generation) throw new Error('请求已取消。');
+      if (inflight.has(requestKey)) return inflight.get(requestKey);
+    }
     const promise = Promise.resolve().then(async () => {
-      let xhr;
+      let xhr, removeCancel;
       try {
-        if (epoch !== generation) throw new Error('请求已取消。');
+        if (epoch !== generation || signal?.cancelled) throw new Error('请求已取消。');
         const url = SHCore.endpoint(c.baseURL);
         const headers = { 'Content-Type': 'application/json' };
         if (c.apiKey) headers.Authorization = 'Bearer ' + c.apiKey;
         const response = await Zotero.HTTP.request('POST', url, {
           headers, timeout: 45000, responseType: 'json',
-          requestObserver: x => { xhr = x; requests.add(x); },
+          requestObserver: x => {
+            xhr = x; requests.add(x);
+            removeCancel = signal?.onCancel(()=>{try{x.abort();}catch(_){}});
+            if(signal?.cancelled) x.abort();
+          },
           body: JSON.stringify({
             model: c.model, stream: false,
             messages: [
@@ -144,8 +202,11 @@ var SentenceHover = (() => {
         const raw = body?.choices?.[0]?.message?.content;
         if (typeof raw !== 'string') throw new Error('API 未返回 chat/completions 格式的文本结果。');
         const result = SHCore.parseResult(raw, tokens.length);
-        if (epoch === generation) {
-          cache.put(key, result);
+        if (epoch === generation && !signal?.cancelled) {
+          // Bulk jobs checkpoint their own archive instead of rewriting the
+          // ordinary LRU file for every sentence of the document.
+          if (!skipFull) cache.put(key, result);
+          if (full?.archive.get(text)) { try { await full.archive.put(text,result); } catch (_) {} }
         }
         return result;
       } catch (e) {
@@ -159,6 +220,7 @@ var SentenceHover = (() => {
         throw new Error('请求未完成，请检查网络、API 地址或超时设置。');
       } finally {
         requests.delete(xhr);
+        removeCancel?.();
         if (inflight.get(requestKey) === promise) inflight.delete(requestKey);
       }
     });
@@ -168,6 +230,7 @@ var SentenceHover = (() => {
   function makeContext(win, app, hostWindow, reader) {
     const doc = win.document, pages = new Map();
     const contextToken = {};
+    const contextID = String(++nextContextID);
     let current = null, result = null, hoverTimer = null, sequence = 0, lookup = 0, lastPoint = null, lastMove = 0, disposed = false;
     let pending = null, overPopup = false, busy = false, hideTimer = null;
     const keyWindows = new Set();
@@ -177,6 +240,73 @@ var SentenceHover = (() => {
     }
     let pdfDocument = app.pdfDocument;
     const html = name => doc.createElementNS('http://www.w3.org/1999/xhtml', name);
+    // One compact control, without an enclosing panel or helper text.
+    doc.getElementById('sentence-hover-fulltext')?.remove();
+    const fullBar = html('button'), fullStart = fullBar;
+    fullStart.id = 'sentence-hover-fulltext'; fullStart.type = 'button';
+    fullStart.setAttribute('data-sh-context',contextID);
+    fullStart.textContent = '全文翻译';
+    fullStart.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:2147483646;max-width:calc(100vw - 24px);box-sizing:border-box;padding:5px 10px;background:#fff;color:#24323b;border:1px solid #adb7be;border-radius:5px;font:13px/1.5 system-ui;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;';
+    doc.body.appendChild(fullStart);
+    let fullEntry = null, unsubscribeFull = null, startingFull = false;
+    function fullFeedback(s) {
+      if (!isAlive()) return;
+      const working = ['extracting','translating'].includes(s.phase);
+      fullStart.disabled = startingFull;
+      fullStart.textContent = s.phase === 'extracting' ? '读取 '+s.pages+'/'+s.pageCount+' · 取消' :
+        s.phase === 'translating' ? '翻译 '+s.done+'/'+s.total+' · 取消' :
+        s.phase === 'complete' ? '全文翻译 ✓' : s.phase === 'idle' ? '全文翻译' : '继续 / 重试全文翻译';
+      fullStart.title = working ? '点击取消全文翻译' :
+        s.phase === 'complete' ? '已完成 '+s.done+'/'+s.total+' 句' : s.message || '';
+      if (!working && s.emptyPages) fullStart.title += ' · '+s.emptyPages+' 页无可译英文';
+      fullStart.setAttribute('aria-busy', String(working));
+    }
+    async function startFull() {
+      if (startingFull || fullStart.disabled) return;
+      startingFull = true; fullStart.disabled = true; fullStart.textContent = '正在准备…'; fullStart.title = '';
+      const epoch = generation, documentRef = app.pdfDocument;
+      try {
+        const c = config();
+        if (!c.baseURL || !c.model) throw new Error('请先在设置中填写 API 地址和模型名称。');
+        SHCore.endpoint(c.baseURL);
+        const count = Number(documentRef?.numPages);
+        if (!Number.isInteger(count) || count<1) throw new Error('PDF 尚未加载完成，请稍后重试。');
+        const store = await cacheFor(reader);
+        if (!store.path) throw new Error('全文缓存需要可写入的本地 PDF 目录，请先下载附件。');
+        const entry = await fullDocumentFor(reader,store,c);
+        if (!isAlive() || epoch !== generation) return;
+        if (activeFullJob && activeFullJob.archive !== entry.archive) throw new Error('另一篇 PDF 正在全文翻译，请先完成或取消。');
+        fullEntry = entry; unsubscribeFull?.();
+        unsubscribeFull = entry.archive.subscribe(fullFeedback);
+        activeFullJob = entry; startingFull = false;
+        await entry.archive.run({pageCount:count,concurrency:c.fullConcurrency,getPage:async i=>{
+          if(!isAlive() || app.pdfDocument !== documentRef) throw new Error('PDF 阅读器已关闭或文档已改变');
+          return readPage(i,documentRef);
+        }});
+        if (activeFullJob === entry) activeFullJob = null;
+      } catch(e) {
+        if (isAlive()) { fullStart.textContent = '重试全文翻译'; fullStart.title = e.message || '全文翻译启动失败'; }
+      } finally {
+        startingFull = false;
+        if (isAlive()) { fullStart.disabled=false; fullStart.setAttribute('aria-busy','false'); }
+      }
+    }
+    fullStart.addEventListener('click',()=>{
+      if (fullStart.disabled) return;
+      if (fullEntry && ['extracting','translating'].includes(fullEntry.archive.status().phase)) {
+        fullStart.disabled=true; fullStart.textContent='正在取消…';
+        fullEntry.archive.cancel('已取消，可继续未完成的句子');
+      } else startFull();
+    });
+    async function readPage(pageIndex, documentRef = app.pdfDocument) {
+      const args=Components.utils.cloneInto({pageIndex},win);
+      const data=await documentRef.getPageData(args);
+      const chars=Array.from(data.chars || [],c=>({
+        c:c.c,rect:Array.from(c.rect || []),inlineRect:c.inlineRect?Array.from(c.inlineRect):null,
+        ignorable:c.ignorable,spaceAfter:c.spaceAfter,lineBreakAfter:c.lineBreakAfter,paragraphBreakAfter:c.paragraphBreakAfter
+      }));
+      return SHCore.buildPage(chars);
+    }
     const wordOverlay = html('div'); wordOverlay.id = 'sentence-hover-word-highlight';
     wordOverlay.setAttribute('aria-hidden', 'true');
     // Blend the whole highlight group with the PDF so black glyphs stay black.
@@ -300,14 +430,7 @@ var SentenceHover = (() => {
       if (pdfDocument !== app.pdfDocument) { pdfDocument = app.pdfDocument; pages.clear(); clear(); }
       if (!pages.has(pageIndex)) {
         // Cross-compartment arguments must be cloned into the PDF window.
-        const args = Components.utils.cloneInto({ pageIndex }, win);
-        const promise = app.pdfDocument.getPageData(args).then(data => {
-          const chars = Array.from(data.chars || [], c => ({
-            c: c.c, rect: Array.from(c.rect || []), inlineRect: c.inlineRect ? Array.from(c.inlineRect) : null,
-            ignorable: c.ignorable, spaceAfter: c.spaceAfter, lineBreakAfter: c.lineBreakAfter, paragraphBreakAfter: c.paragraphBreakAfter
-          }));
-          return SHCore.buildPage(chars);
-        }).catch(e => { pages.delete(pageIndex); throw e; });
+        const promise = readPage(pageIndex).catch(e => { pages.delete(pageIndex); throw e; });
         pages.set(pageIndex, promise);
         if (pages.size > 12) pages.delete(pages.keys().next().value);
       }
@@ -351,6 +474,7 @@ var SentenceHover = (() => {
       return { ...hit, pageIndex, bounds, wordRects, point: { x, y } };
     }
     async function move(event) {
+      if (fullBar.contains(event.target)) { clear(); return; }
       if (box.contains(event.target)) { enterPopup(); return; }
       overPopup = false;
       if (!config().enabled || event.buttons || !win.getSelection().isCollapsed) { clear(); return; }
@@ -443,10 +567,13 @@ var SentenceHover = (() => {
       if (disposed) return;
       // Invalidate asynchronous work before touching any window-owned objects.
       disposed = true; sequence++; lookup++; current = null; pending = null; result = null; pages.clear();
+      unsubscribeFull?.();
+      if (activeFullJob === fullEntry) fullEntry?.archive.cancel('阅读器已关闭，可重新打开后继续');
       if (activeContext === contextToken) activeContext = null;
       const cleanup = [
         () => win.clearTimeout(hoverTimer), () => win.clearTimeout(hideTimer),
         () => box.remove(), () => wordOverlay.remove(),
+        () => fullBar.remove(),
         () => doc.removeEventListener('mousemove', move, true),
         () => doc.removeEventListener('selectionchange', selection),
         () => doc.removeEventListener('mouseleave', leave),
@@ -462,22 +589,33 @@ var SentenceHover = (() => {
     }
     function unload() { contexts.delete(win); destroy(); }
     win.addEventListener('unload', unload, { once: true });
-    return { clear, doc, isAlive, applyAppearance, refreshHighlight: () => highlightWord(current || pending), destroy };
+    return { clear, doc, contextID, isAlive, applyAppearance, setFullControlVisible: visible => { fullStart.style.display=visible?'':'none'; }, refreshHighlight: () => highlightWord(current || pending), destroy };
   }
   function scan() {
     if (!running) return;
     const found = new Set();
-    function walk(win, depth = 0, hostWindow = null, reader = null) {
+    function walk(win, depth = 0, hostWindow = null, reader = null, controls = { assigned:false }) {
       if (!win || depth > 5) return;
       try {
         const native = win.wrappedJSObject || win;
         const app = native.PDFViewerApplication;
-        if (app?.pdfDocument && win.document.body) {
-          found.add(win);
-          if (contexts.has(win) && !contexts.get(win).isAlive()) dropContext(win, contexts.get(win));
-          if (!contexts.has(win)) contexts.set(win, makeContext(win, app, hostWindow, reader));
+        // Zotero can expose the same PDF application on a wrapper frame.
+        // Attach only to the actual page document, and reuse its context even
+        // when Gecko exposes a different Window wrapper on a subsequent scan.
+        if (app?.pdfDocument && win.document.body && win.document.querySelector('.pdfViewer, .page[data-page-number]')) {
+          const id=win.document.getElementById('sentence-hover-fulltext')?.getAttribute('data-sh-context');
+          let existing=[...contexts].find(([,ctx])=>ctx.contextID===id);
+          if (existing && !existing[1].isAlive()) { dropContext(...existing); existing=null; }
+          if (!existing) {
+            if (contexts.has(win)) dropContext(win,contexts.get(win));
+            const ctx=makeContext(win,app,hostWindow,reader);
+            contexts.set(win,ctx); existing=[win,ctx];
+          }
+          if (!found.has(existing[0])) existing[1].setFullControlVisible(!controls.assigned);
+          found.add(existing[0]);
+          controls.assigned=true;
         }
-        for (const iframe of win.document.querySelectorAll('iframe')) walk(iframe.contentWindow, depth + 1, hostWindow, reader);
+        for (const iframe of win.document.querySelectorAll('iframe')) walk(iframe.contentWindow, depth + 1, hostWindow, reader, controls);
       } catch (_) {}
     }
     for (const reader of Zotero.Reader._readers || []) walk(reader._iframeWindow, 0, reader._window, reader);
@@ -489,6 +627,7 @@ var SentenceHover = (() => {
     try { timerWindow?.clearInterval(timer); } catch (_) {}
     cancelRequests();
     for (const [win, ctx] of contexts) dropContext(win, ctx);
+    await flushFullDocuments();
     await flushCaches();
   }
   return { start, stop, config, save, saveAppearance, setSourceHighlight, normalizeAppearance, translate, reset, flushCache: flushCaches, diagnostic: () => ({ readers: (Zotero.Reader._readers || []).length, connectedPDFViews: contexts.size, cachedSentences: cacheStatus().count, cache: cacheStatus() }) };

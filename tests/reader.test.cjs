@@ -5,7 +5,7 @@ const path=require('node:path');
 const vm=require('node:vm');
 const {JSDOM}=require(process.env.SH_JSDOM || 'jsdom');
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
-function fixture(request, pageTop = 0, geometry = 'normal', pageLeft = 0, multiline = false) {
+function fixture(request, pageTop = 0, geometry = 'normal', pageLeft = 0, multiline = false, fullSetup = null) {
   const dom=new JSDOM('<body><div class="page" data-page-number="1"></div></body>',{pretendToBeVisual:true});
   const win=dom.window,doc=win.document,page=doc.querySelector('.page');
   const host=new JSDOM('<body></body>',{pretendToBeVisual:true}).window;
@@ -32,12 +32,140 @@ function fixture(request, pageTop = 0, geometry = 'normal', pageLeft = 0, multil
   win.PDFViewerApplication={pdfDocument:{getPageData:async()=>({chars})},pdfViewer:{getPageView:()=>({viewport})}};
   const prefs=new Map(Object.entries({baseURL:'https://example.com/v1',model:'test',delay:200,hideDelay:180,enabled:true}).map(([k,v])=>['extensions.sentenceHover.'+k,v]));
   const scope={URL,Zotero:{Prefs:{get:k=>prefs.get(k),set:(k,v)=>prefs.set(k,v)},HTTP:{request},getMainWindow:()=>win,Reader:{_readers:[{_iframeWindow:win,_window:host}]}},Services:{},Components:{utils:{cloneInto:x=>x}}};
+  if(fullSetup){
+    scope.PathUtils={join:(...a)=>a.join('/'),parent:p=>p.slice(0,p.lastIndexOf('/'))};
+    scope.IOUtils={
+      exists:async p=>p.endsWith('.pdf')||fullSetup.disk.has(p),
+      stat:async p=>({size:fullSetup.disk.get(p).length}),
+      readJSON:async p=>JSON.parse(fullSetup.disk.get(p)),
+      writeJSON:async(p,d)=>fullSetup.disk.set(p,JSON.stringify(d))
+    };
+    scope.Zotero.Reader._readers[0]._item={key:'ARTICLE1',getFilePathAsync:async()=>'/storage/ARTICLE1/paper.pdf'};
+    win.PDFViewerApplication.pdfDocument.numPages=fullSetup.pageCount||1;
+    if(fullSetup.getPageData)win.PDFViewerApplication.pdfDocument.getPageData=fullSetup.getPageData;
+  }
   vm.createContext(scope);
-  for(const file of ['core.js','cache.js','addon.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),scope);
+  for(const file of ['core.js','cache.js','fulltext.js','addon.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),scope);
+  let scanTick;
+  const nativeInterval=win.setInterval.bind(win);
+  win.setInterval=(fn,delay)=>{scanTick=fn;return nativeInterval(fn,delay);};
   const api=scope.SentenceHover;api.start();
   doc.getElementById('sentence-hover-popup').getBoundingClientRect=()=>({width:480,height:120});
-  return {api,win,host,doc,move:(x,y=16)=>page.dispatchEvent(new win.MouseEvent('mousemove',{bubbles:true,clientX:pageLeft+x,clientY:pageTop+y})),close:()=>{api.stop();win.close();host.close();}};
+  return {api,win,host,doc,readers:scope.Zotero.Reader._readers,rescan:()=>scanTick(),move:(x,y=16)=>page.dispatchEvent(new win.MouseEvent('mousemove',{bubbles:true,clientX:pageLeft+x,clientY:pageTop+y})),close:()=>{api.stop();win.close();host.close();}};
 }
+test('one-click full translation caches every sentence and hover reuses persisted full archive after restart',async()=>{
+  const disk=new Map();let calls=0;
+  const request=async(method,url,options)=>{
+    calls++;
+    const data=JSON.parse(JSON.parse(options.body).messages[1].content);
+    return {response:{choices:[{message:{content:JSON.stringify({segments:[{text:'整句译文',source:data.tokens.map(t=>t.id)}]})}}]}};
+  };
+  const f=fixture(request,0,'normal',0,false,{disk});
+  try{
+    const bar=f.doc.getElementById('sentence-hover-fulltext'),button=bar;
+    assert.equal(button.localName,'button');assert.equal(button.children.length,0);
+    button.click();await wait(80);
+    assert.equal(bar.textContent,'全文翻译 ✓');assert.match(bar.title,/已完成 2\/2/);assert.equal(calls,2);
+    const file=[...disk.keys()].find(p=>p.includes('sentence-hover-fulltext-'));
+    assert.ok(file?.startsWith('/storage/ARTICLE1/'));
+    const stored=JSON.parse(disk.get(file));assert.equal(stored.results.length,2);
+    assert.equal(stored.results[0][1].words.length,3);
+    f.move(12);await wait(280);assert.equal(calls,2);
+    assert.ok(f.doc.getElementById('sentence-hover-popup').textContent.includes('整句译文'));
+  }finally{f.close();}
+  const g=fixture(request,0,'normal',0,false,{disk});
+  try{
+    g.move(12);await wait(280);assert.equal(calls,2);
+    assert.ok(g.doc.getElementById('sentence-hover-popup').textContent.includes('整句译文'));
+    await g.api.reset();
+    for(const [p,d] of disk)if(p.includes('sentence-hover-fulltext-'))assert.equal(JSON.parse(d).results.length,0);
+  }finally{g.close();}
+});
+test('three background requests leave capacity for foreground hover translation',async()=>{
+  const text='One. Two. Three. Four. Five.';
+  const chars=Array.from(text,(c,i)=>({c,rect:[i*8,10,i*8+8,24]}));
+  const waiting=new Map(),calls=[];let active=0,peak=0;
+  const f=fixture(async(method,url,options)=>{
+    const data=JSON.parse(JSON.parse(options.body).messages[1].content);
+    calls.push(data.sentence);active++;peak=Math.max(peak,active);
+    await new Promise(r=>waiting.set(data.sentence,()=>{active--;waiting.delete(data.sentence);r();}));
+    return {response:{choices:[{message:{content:JSON.stringify({segments:[{text:'译文 '+data.sentence,source:[0]}]})}}]}};
+  },0,'normal',0,false,{disk:new Map(),getPageData:async()=>({chars})});
+  try{
+    const button=f.doc.getElementById('sentence-hover-fulltext');
+    button.click();await wait(60);assert.equal(calls.length,3);assert.equal(active,3);
+    f.move(text.indexOf('Five')*8+4);await wait(280);
+    assert.equal(active,4);assert.ok(waiting.has('Five.'));
+    waiting.get('Five.')();await wait(50);
+    assert.ok(f.doc.getElementById('sentence-hover-popup').textContent.includes('Five.'));
+    while(waiting.size){[...waiting.values()].forEach(r=>r());await wait(30);}
+    await wait(30);assert.equal(button.textContent,'全文翻译 ✓');
+    assert.equal(peak,4);assert.equal(calls.filter(t=>t==='Five.').length,1);
+  }finally{for(const finish of waiting.values())finish();f.close();}
+});
+test('full translation cancel aborts its request and allows retry without leaving the reader',async()=>{
+  const disk=new Map();let calls=0,aborts=0;
+  const f=fixture(async(method,url,options)=>{
+    calls++;
+    if(calls===1)return new Promise((resolve,reject)=>options.requestObserver({abort(){aborts++;reject(new Error('abort'));}}));
+    const data=JSON.parse(JSON.parse(options.body).messages[1].content);
+    return {response:{choices:[{message:{content:JSON.stringify({segments:[{text:'译文',source:data.tokens.map(t=>t.id)}]})}}]}};
+  },0,'normal',0,false,{disk});
+  try{
+    const bar=f.doc.getElementById('sentence-hover-fulltext'),start=bar;
+    start.click();await wait(50);assert.match(start.textContent,/取消/);assert.equal(start.disabled,false);start.click();await wait(50);
+    assert.equal(aborts,1);assert.match(bar.title,/已取消/);assert.equal(start.disabled,false);
+    start.click();await wait(80);assert.equal(bar.textContent,'全文翻译 ✓');
+  }finally{f.close();}
+});
+test('closing reader cancels full translation before accessing dead page objects',async()=>{
+  let aborts=0;
+  const f=fixture(async(method,url,options)=>new Promise((resolve,reject)=>options.requestObserver({abort(){aborts++;reject(new Error('abort'));}})),0,'normal',0,false,{disk:new Map()});
+  try{
+    f.doc.getElementById('sentence-hover-fulltext').click();await wait(60);
+    f.win.dispatchEvent(new f.win.Event('unload'));await wait(60);
+    assert.equal(aborts,2);assert.equal(f.doc.getElementById('sentence-hover-fulltext'),null);
+  }finally{f.close();}
+});
+test('full translation has one compact button and repeated scans cannot add duplicates',()=>{
+  const f=fixture(async()=>answer);
+  try{
+    for(let i=0;i<5;i++)f.rescan();
+    const nodes=f.doc.querySelectorAll('#sentence-hover-fulltext');
+    assert.equal(nodes.length,1);assert.equal(nodes[0].localName,'button');
+    assert.equal(nodes[0].textContent,'全文翻译');assert.equal(nodes[0].childElementCount,0);
+    assert.doesNotMatch(f.doc.body.textContent,/按服务商规则计费|已缓存句子不重复请求/);
+  }finally{f.close();}
+});
+test('wrapper PDF app and split views expose only one full-translation control per reader',()=>{
+  const f=fixture(async()=>answer);
+  const outer=new JSDOM('<body><iframe></iframe><iframe></iframe></body>',{pretendToBeVisual:true}).window;
+  const second=new JSDOM('<body><div class="pdfViewer"></div></body>',{pretendToBeVisual:true}).window;
+  try{
+    outer.PDFViewerApplication=f.win.PDFViewerApplication;
+    second.PDFViewerApplication=f.win.PDFViewerApplication;
+    const frames=outer.document.querySelectorAll('iframe');
+    Object.defineProperty(frames[0],'contentWindow',{value:f.win});
+    Object.defineProperty(frames[1],'contentWindow',{value:second});
+    f.readers[0]._iframeWindow=outer;
+    f.rescan();f.rescan();
+    assert.equal(outer.document.querySelectorAll('#sentence-hover-fulltext').length,0);
+    assert.equal(f.doc.querySelectorAll('#sentence-hover-fulltext').length,1);
+    assert.equal(f.doc.getElementById('sentence-hover-fulltext').style.display,'');
+    assert.equal(second.document.getElementById('sentence-hover-fulltext').style.display,'none');
+    assert.equal(f.api.diagnostic().connectedPDFViews,2);
+  }finally{f.close();outer.close();second.close();}
+});
+test('the same page exposed through two frame references retains its single visible control',()=>{
+  const f=fixture(async()=>answer);
+  const outer=new JSDOM('<body><iframe></iframe><iframe></iframe></body>',{pretendToBeVisual:true}).window;
+  try{
+    for(const frame of outer.document.querySelectorAll('iframe'))Object.defineProperty(frame,'contentWindow',{value:f.win});
+    f.readers[0]._iframeWindow=outer;f.rescan();
+    assert.equal(f.doc.querySelectorAll('#sentence-hover-fulltext').length,1);
+    assert.equal(f.doc.getElementById('sentence-hover-fulltext').style.display,'');
+  }finally{f.close();outer.close();}
+});
 test('saving after a dead reader object still permits test translation and removes host listeners',async()=>{
   let calls=0;const f=fixture(async()=>{calls++;return answer;});
   try{

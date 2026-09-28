@@ -48,8 +48,23 @@
       if (ch.paragraphBreakAfter) text += '\n';
       else if (!joined && (ch.spaceAfter || ch.lineBreakAfter)) text += ' ';
     }
-    const segments = sentences(text).map(s => ({ ...s, words: words(s.text) }));
+    const segments = sentences(text).flatMap(s => splitLong(s)).map(s => ({ ...s, words: words(s.text) }));
     return { text, anchors, segments };
+  }
+  function splitLong(sentence, limit = 1800) {
+    const parts = []; let offset=0;
+    while(offset < sentence.text.length) {
+      let end=Math.min(offset+limit,sentence.text.length);
+      if(end < sentence.text.length) {
+        const candidate=sentence.text.slice(offset,end);
+        const boundary=Math.max(candidate.lastIndexOf(' '),candidate.lastIndexOf(';'),candidate.lastIndexOf(','));
+        if(boundary>limit/2) end=offset+boundary+1;
+      }
+      const raw=sentence.text.slice(offset,end),text=raw.trim();
+      if(text) { const start=sentence.start+offset+raw.indexOf(text);parts.push({text,start,end:start+text.length}); }
+      offset=end;
+    }
+    return parts;
   }
   function atPoint(page, x, y) {
     const candidates = page.anchors.filter(a => { const r = a.inlineRect; return x >= Math.min(r[0],r[2]) && x <= Math.max(r[0],r[2]) && y >= Math.min(r[1],r[3]) && y <= Math.max(r[1],r[3]); });

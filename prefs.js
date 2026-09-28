@@ -30,9 +30,13 @@ window.SHPrefs = {
     }, { once: true });
     const appearanceKeys = ['fontSize','popupWidth','transparency'];
     const booleanKeys = new Set(['enabled','highlightSourceWord']);
-    const keys = ['enabled','highlightSourceWord','baseURL','model','apiKey','delay',...appearanceKeys];
+    const keys = ['enabled','highlightSourceWord','baseURL','model','apiKey','delay','fullConcurrency',...appearanceKeys];
     const c = api.config();
     for (const key of keys) { if (booleanKeys.has(key)) get(key).checked = c[key]; else get(key).value = c[key]; }
+    const concurrencyLabel=()=>{get('fullConcurrencyValue').textContent=get('fullConcurrency').value+' 路';};
+    get('fullConcurrency').addEventListener('input',concurrencyLabel);
+    get('fullConcurrency').addEventListener('change',concurrencyLabel);
+    concurrencyLabel();
     get('highlightSourceWord').onchange = () => {
       api.setSourceHighlight(get('highlightSourceWord').checked);
       notify('save-status', get('highlightSourceWord').checked ? '原文单词高亮已开启。' : '原文单词高亮已关闭。');

@@ -1,9 +1,16 @@
 {
   "manifest_version": 2,
   "name": "句译随行 Sentence Hover",
-  "version": "1.0.1",
+  "version": "1.1.2",
   "description": "悬停翻译 PDF 英文整句，并联动高亮中文对应词语。",
   "author": "Sentence Hover contributors",
   "homepage_url": "https://github.com/Nova-Meteor/zotero-sentence-hover",
-  "applications": {"zotero": {"id": "sentence-hover@local", "update_url": "https://github.com/Nova-Meteor/zotero-sentence-hover/releases/latest/download/updates.json", "strict_min_version": "10.0", "strict_max_version": "10.*"}}
+  "applications": {
+    "zotero": {
+      "id": "sentence-hover@local",
+      "update_url": "https://raw.githubusercontent.com/Nova-Meteor/zotero-sentence-hover/main/updates.json",
+      "strict_min_version": "10.0",
+      "strict_max_version": "10.*"
+    }
+  }
 }

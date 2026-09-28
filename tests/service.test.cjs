@@ -6,7 +6,7 @@ function setup(request, extra = {}) {
   const prefs=new Map(Object.entries({baseURL:'https://example.com/v1',model:'test',apiKey:'private-key'}).map(([k,v])=>['extensions.sentenceHover.'+k,v]));
   const scope={URL, Zotero:{Prefs:{get:k=>prefs.get(k),set:(k,v)=>prefs.set(k,v)},HTTP:{request},Reader:{_readers:[]},Profile:{dir:'/profile'}},Services:{},Components:{},...extra};
   vm.createContext(scope);
-  for(const file of ['core.js','cache.js','addon.js']) vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'..',file),'utf8'),scope);
+  for(const file of ['core.js','cache.js','fulltext.js','addon.js']) vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'..',file),'utf8'),scope);
   return scope.SentenceHover;
 }
 const response={response:{choices:[{message:{content:JSON.stringify({segments:[{text:'记忆',source:[0]}]})}}]}};
@@ -35,7 +35,7 @@ test('at most two distinct requests may run concurrently',async()=>{
 test('disk cache survives new plugin instance; force refresh replaces it without storing credentials',async()=>{
   let disk=null,calls=0;
   const reader={_item:{getFilePathAsync:async()=>'/storage/DRMTBZNF/paper.pdf'}};
-  const extra={PathUtils:{join:(...a)=>a.join('/'),parent:p=>p.slice(0,p.lastIndexOf('/'))},IOUtils:{exists:async p=>p.endsWith('.pdf')||disk!==null,stat:async()=>({size:disk.length}),readJSON:async()=>JSON.parse(disk),writeJSON:async(p,data,options)=>{assert.equal(p,'/storage/DRMTBZNF/sentence-hover-cache.json');assert.equal(options.tmpPath,p+'.tmp');disk=JSON.stringify(data);}}};
+  const extra={PathUtils:{join:(...a)=>a.join('/'),parent:p=>p.slice(0,p.lastIndexOf('/'))},IOUtils:{exists:async p=>p.endsWith('.pdf')||(p==='/storage/DRMTBZNF/sentence-hover-cache.json'&&disk!==null),stat:async()=>({size:disk.length}),readJSON:async()=>JSON.parse(disk),writeJSON:async(p,data,options)=>{assert.equal(p,'/storage/DRMTBZNF/sentence-hover-cache.json');assert.equal(options.tmpPath,p+'.tmp');disk=JSON.stringify(data);}}};
   const request=async()=>{calls++;return response;};
   const a=setup(request,extra);await a.translate('Memory.',{reader});await a.flushCache();
   assert.ok(disk.includes('Memory.'));assert.ok(!disk.includes('private-key'));
@@ -87,4 +87,12 @@ test('appearance settings are normalized and keep cached translations',async()=>
   assert.equal(api.config().fontSize,17);assert.equal(api.config().popupWidth,240);assert.equal(api.config().transparency,80);
   api.saveAppearance({fontSize:100,popupWidth:99999,transparency:''});
   assert.equal(api.config().fontSize,32);assert.equal(api.config().popupWidth,1200);assert.equal(api.config().transparency,0);
+});
+test('full-text concurrency defaults to three and saved values stay within one to six',()=>{
+  const api=setup(async()=>response);
+  assert.equal(api.config().fullConcurrency,3);
+  api.save({...api.config(),fullConcurrency:6});assert.equal(api.config().fullConcurrency,6);
+  api.save({...api.config(),fullConcurrency:99});assert.equal(api.config().fullConcurrency,6);
+  api.save({...api.config(),fullConcurrency:0});assert.equal(api.config().fullConcurrency,1);
+  api.save({...api.config(),fullConcurrency:'invalid'});assert.equal(api.config().fullConcurrency,3);
 });

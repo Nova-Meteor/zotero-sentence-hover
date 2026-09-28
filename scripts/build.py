@@ -16,7 +16,7 @@ for field in ('id', 'update_url', 'strict_max_version'):
     assert app.get(field), f'Missing required Zotero manifest field: {field}'
 assert app['update_url'].startswith('https://')
 ET.parse(source / 'prefs.xhtml')
-runtime = ['manifest.json','bootstrap.js','core.js','cache.js','addon.js','prefs.xhtml','prefs.js','prefs.css','LICENSE']
+runtime = ['manifest.json','bootstrap.js','core.js','cache.js','fulltext.js','addon.js','prefs.xhtml','prefs.js','prefs.css','LICENSE']
 xpi = output / f'sentence-hover-{version}.xpi'
 with ZipFile(xpi, 'w', ZIP_DEFLATED) as z:
     for name in runtime:
@@ -36,5 +36,6 @@ updates = {'addons': {app['id']: {'updates': [{
         'strict_max_version': app['strict_max_version']
     }}
 }]}}}
-(output / 'updates.json').write_text(json.dumps(updates, indent=2) + chr(10), encoding='utf-8')
+# The update feed lives in the repository, so Releases need only the XPI asset.
+(root / 'updates.json').write_text(json.dumps(updates, indent=2) + chr(10), encoding='utf-8')
 print(json.dumps({'xpi':str(xpi),'bytes':xpi.stat().st_size,'manifest':'valid','xhtml':'valid','archive':'valid'}, ensure_ascii=False))

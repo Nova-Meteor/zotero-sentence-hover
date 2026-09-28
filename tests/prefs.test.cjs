@@ -6,7 +6,7 @@ const vm=require('node:vm');
 const {JSDOM}=require(process.env.SH_JSDOM || 'jsdom');
 test('appearance preview, independent save and defaults work without API configuration',()=>{
   const dom=new JSDOM(fs.readFileSync(path.join(__dirname,'..','prefs.xhtml'),'utf8'),{contentType:'application/xhtml+xml'});
-  const values={enabled:true,baseURL:'',model:'',apiKey:'',delay:500,fontSize:17,popupWidth:640,transparency:0};
+  const values={enabled:true,baseURL:'',model:'',apiKey:'',delay:500,fullConcurrency:3,fontSize:17,popupWidth:640,transparency:0};
   let saved=0;
   const api={
     config:()=>values,
@@ -19,6 +19,9 @@ test('appearance preview, independent save and defaults work without API configu
     vm.runInNewContext(fs.readFileSync(path.join(__dirname,'..','prefs.js'),'utf8'),scope);
     dom.window.SHPrefs.init();
     const get=k=>dom.window.document.getElementById('sh-'+k);
+    assert.equal(get('fullConcurrencyValue').textContent,'3 路');
+    get('fullConcurrency').value='5';get('fullConcurrency').dispatchEvent(new dom.window.Event('input'));
+    assert.equal(get('fullConcurrencyValue').textContent,'5 路');
     for(const key of ['fontSize','popupWidth','transparency']) assert.equal(get(key).type,'range');
     assert.equal(get('fontSizeValue').textContent,'17 像素');
     assert.equal(get('popupWidthValue').textContent,'640 像素');
@@ -38,7 +41,7 @@ test('appearance preview, independent save and defaults work without API configu
 function servicePane(saveError = null, requestError = null) {
   const dom=new JSDOM(fs.readFileSync(path.join(__dirname,'..','prefs.xhtml'),'utf8'),{contentType:'application/xhtml+xml'});
   let calls=0,finish;
-  const values={enabled:true,baseURL:'https://example.com/v1',model:'test',apiKey:'',delay:500,fontSize:17,popupWidth:640,transparency:0};
+  const values={enabled:true,baseURL:'https://example.com/v1',model:'test',apiKey:'',delay:500,fullConcurrency:3,fontSize:17,popupWidth:640,transparency:0};
   const api={config:()=>values,normalizeAppearance:v=>v,diagnostic:()=>({connectedPDFViews:1,cache:{error:''}}),
     save(){if(saveError)throw new Error(saveError);},
     async translate(){calls++;await new Promise(r=>finish=r);if(requestError)throw new Error(requestError);return {text:'睡眠改善记忆。',segments:[{text:'睡眠',source:[4]}]};},flushCache:async()=>{}};

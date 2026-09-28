@@ -22,6 +22,8 @@
     <html:div class="sh-form">
       <html:label for="sh-delay">悬停等待时间</html:label>
       <html:div class="sh-control"><html:input id="sh-delay" type="number" min="200" max="3000" step="100"/><html:span>毫秒</html:span></html:div>
+      <html:label for="sh-fullConcurrency">全文翻译并发</html:label>
+      <html:div class="sh-control"><html:input id="sh-fullConcurrency" type="range" min="1" max="6" step="1"/><html:span id="sh-fullConcurrencyValue" class="sh-slider-value"/></html:div>
     </html:div>
     <html:p class="sh-help">重新翻译：Ctrl+Alt+R（macOS：⌘+Option+R），或点击弹窗中的 ↻。</html:p>
     <html:div class="sh-actions"><html:button id="sh-save" type="button">保存设置</html:button><html:span id="sh-save-status" class="sh-action-status" role="status" aria-live="polite"/></html:div>
@@ -53,6 +55,7 @@
     <label><html:h2>翻译缓存</html:h2></label>
     <html:p class="sh-help">缓存保存在各 PDF 所在目录的 <html:code>sentence-hover-cache.json</html:code>，重启后可复用。</html:p>
     <html:p class="sh-help">每个目录最多 1000 句，90 天未使用的缓存失效。不同服务和模型使用独立缓存。</html:p>
+    <html:p class="sh-help">PDF 左下角的“全文翻译”可提前翻译整篇文章。全文缓存单独保存为 <html:code>sentence-hover-fulltext-*.json</html:code>，包含所有识别出的英文词及对应译文片段，不受普通缓存的 1000 句限制。</html:p>
     <html:p class="sh-help">仅清空本次运行已加载的文章缓存，其他文章不受影响。</html:p>
     <html:div class="sh-actions"><html:button id="sh-clear" type="button">清空已加载文章缓存</html:button><html:span id="sh-clear-status" class="sh-action-status" role="status" aria-live="polite"/></html:div>
   </groupbox>

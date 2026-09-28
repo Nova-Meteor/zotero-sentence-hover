@@ -4,6 +4,7 @@ async function startup({ rootURI }, reason) {
   shScope = { Zotero, Services, Components, IOUtils, PathUtils, URL };
   Services.scriptloader.loadSubScript(rootURI + 'core.js', shScope, 'UTF-8');
   Services.scriptloader.loadSubScript(rootURI + 'cache.js', shScope, 'UTF-8');
+  Services.scriptloader.loadSubScript(rootURI + 'fulltext.js', shScope, 'UTF-8');
   Services.scriptloader.loadSubScript(rootURI + 'addon.js', shScope, 'UTF-8');
   Zotero.SentenceHover = shScope.SentenceHover;
   await Zotero.PreferencePanes.register({
